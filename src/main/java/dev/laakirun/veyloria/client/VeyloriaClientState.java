@@ -15,6 +15,7 @@ public final class VeyloriaClientState {
     private boolean registeredAccount;
     private boolean authenticated;
     private int copper;
+    private int armor;
     private int mana;
     private int manaMax;
     private String lastError = "";
@@ -34,6 +35,7 @@ public final class VeyloriaClientState {
         registeredAccount = false;
         authenticated = false;
         copper = 0;
+        armor = 0;
         mana = 0;
         manaMax = 0;
         lastError = "";
@@ -75,6 +77,14 @@ public final class VeyloriaClientState {
 
     public void setCopper(int copper) {
         this.copper = copper;
+    }
+
+    public int armor() {
+        return armor;
+    }
+
+    public void setArmor(int armor) {
+        this.armor = Math.max(0, armor);
     }
 
     public int mana() {

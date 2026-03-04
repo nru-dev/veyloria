@@ -152,7 +152,7 @@ public final class VeyloriaClientEvents {
             String manaText = "MP " + mana + "/" + manaMax;
             guiGraphics.drawCenteredString(minecraft.font, manaText, width / 2, manaY - 9, 0x55B8FF);
         }
-        int armorValue = Math.max(0, minecraft.player.getArmorValue());
+        int armorValue = VeyloriaClientState.instance().armor();
         guiGraphics.drawString(minecraft.font, "Ур. " + minecraft.player.experienceLevel, 12, hpY - 1, 0xF0F0F0, false);
         guiGraphics.drawString(minecraft.font, "Броня: " + armorValue, 12, hpY + 9, 0xD0D0D0, false);
         guiGraphics.drawString(minecraft.font, "Медь: " + VeyloriaClientState.instance().copper(), width - 110, hpY - 1, 0xF0A040, false);
@@ -202,6 +202,7 @@ public final class VeyloriaClientEvents {
         if (marker.startsWith("[veyloria:profile]")) {
             state.setCopper(parseInt(fieldValue(marker, "copper")));
             state.setMana(parseInt(fieldValue(marker, "mana")), parseInt(fieldValue(marker, "manaMax")));
+            state.setArmor(parseInt(fieldValue(marker, "armor")));
             return;
         }
         if (marker.startsWith("[veyloria:bars]")) {

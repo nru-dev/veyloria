@@ -25,7 +25,7 @@ public final class ServerMarkers {
         player.sendSystemMessage(Component.literal(AUTH_OK));
     }
 
-    public static void sendProfile(ServerPlayer player, CharacterProfile profile, int xpToNextLevel, int manaCurrent, int manaMax) {
+    public static void sendProfile(ServerPlayer player, CharacterProfile profile, int xpToNextLevel, int manaCurrent, int manaMax, int armor) {
         player.sendSystemMessage(Component.literal(
             PROFILE +
                 "|level=" + profile.level() +
@@ -33,7 +33,8 @@ public final class ServerMarkers {
                 "|xpNext=" + xpToNextLevel +
                 "|copper=" + profile.currencyCopper() +
                 "|mana=" + manaCurrent +
-                "|manaMax=" + manaMax
+                "|manaMax=" + manaMax +
+                "|armor=" + armor
         ));
     }
 
