@@ -36,6 +36,7 @@ public final class SeedImporter {
     public void importSeeds() {
         try (Connection connection = databaseManager.connection()) {
             connection.setAutoCommit(false);
+            clearContentTables(connection);
             upsertItemTemplates(connection, readList("data/veyloria/seeds/item_templates.json", new TypeToken<List<ItemTemplateSeed>>() {
             }));
             upsertLootTables(connection, readList("data/veyloria/seeds/loot_tables.json", new TypeToken<List<LootTableSeed>>() {
@@ -51,6 +52,14 @@ public final class SeedImporter {
         } catch (SQLException exception) {
             throw new IllegalStateException("Failed to import seed data", exception);
         }
+    }
+
+    private void clearContentTables(Connection connection) throws SQLException {
+        connection.createStatement().execute("DELETE FROM mob_spawn_groups");
+        connection.createStatement().execute("DELETE FROM mob_templates");
+        connection.createStatement().execute("DELETE FROM loot_entries");
+        connection.createStatement().execute("DELETE FROM loot_tables");
+        connection.createStatement().execute("DELETE FROM item_templates");
     }
 
     private void upsertItemTemplates(Connection connection, List<ItemTemplateSeed> seeds) throws SQLException {
@@ -190,7 +199,6 @@ public final class SeedImporter {
     }
 
     private void replaceSpawnGroups(Connection connection, List<MobSpawnGroupSeed> seeds) throws SQLException {
-        connection.createStatement().execute("DELETE FROM mob_spawn_groups");
         String sql = """
             INSERT INTO mob_spawn_groups(mob_template_id, dimension, center_x, center_y, center_z, radius_x, radius_z, min_alive, max_alive, respawn_seconds, pack_size_min, pack_size_max, pack_spread_min, pack_spread_max, enabled)
             VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)

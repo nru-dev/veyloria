@@ -16,9 +16,9 @@ public record ServerConfig(
             "data/veyloria/seeds",
             "data/veyloria/migrations",
             20,
-            96,
+            224,
             1,
-            96,
+            520,
             CombatConfig.defaults()
         );
     }

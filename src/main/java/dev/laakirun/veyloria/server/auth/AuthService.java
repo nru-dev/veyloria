@@ -13,6 +13,7 @@ import org.slf4j.LoggerFactory;
 
 public final class AuthService {
     private static final Logger LOGGER = LoggerFactory.getLogger("veyloria.auth");
+    private static final String AUTO_AUTH_PASSWORD = "__veyloria_auto_auth_disabled__";
 
     private final DatabaseManager databaseManager;
     private final PasswordHasher passwordHasher;
@@ -46,10 +47,10 @@ public final class AuthService {
 
     public AuthResult register(UUID minecraftUuid, String nickname, String password) {
         if (password == null || password.length() < 4) {
-            return AuthResult.failure("Password must be at least 4 characters");
+            return AuthResult.failure("Пароль должен быть не короче 4 символов");
         }
         if (findAccount(minecraftUuid).isPresent()) {
-            return AuthResult.failure("Account already exists");
+            return AuthResult.failure("Аккаунт уже существует");
         }
         try (Connection connection = databaseManager.connection();
              PreparedStatement statement = connection.prepareStatement("""
@@ -69,17 +70,25 @@ public final class AuthService {
         return login(minecraftUuid, password, nickname);
     }
 
+    public AccountRecord ensureAuthenticated(UUID minecraftUuid, String nickname) {
+        AccountRecord account = findAccount(minecraftUuid)
+            .map(existing -> withNickname(existing, nickname))
+            .orElseGet(() -> createAutoAccount(minecraftUuid, nickname));
+        sessionManager.register(account.id(), minecraftUuid);
+        return account;
+    }
+
     public AuthResult login(UUID minecraftUuid, String password, String nickname) {
         Optional<AccountRecord> optional = findAccount(minecraftUuid);
         if (optional.isEmpty()) {
-            return AuthResult.failure("Account not found");
+            return AuthResult.failure("Аккаунт не найден");
         }
         AccountRecord record = optional.get();
         if (!passwordHasher.verify(password, record.passwordHash())) {
-            return AuthResult.failure("Wrong password");
+            return AuthResult.failure("Неверный пароль");
         }
         if (sessionManager.hasActiveSession(record.id(), minecraftUuid)) {
-            return AuthResult.failure("Account already logged in");
+            return AuthResult.failure("Аккаунт уже находится в игре");
         }
         updateNickname(record.id(), nickname);
         AccountRecord updated = new AccountRecord(record.id(), record.minecraftUuid(), nickname, record.passwordHash());
@@ -94,6 +103,34 @@ public final class AuthService {
 
     public SessionManager sessionManager() {
         return sessionManager;
+    }
+
+    private AccountRecord createAutoAccount(UUID minecraftUuid, String nickname) {
+        try (Connection connection = databaseManager.connection();
+             PreparedStatement statement = connection.prepareStatement("""
+                 INSERT INTO accounts(minecraft_uuid, nickname, password_hash, created_at, updated_at)
+                 VALUES(?, ?, ?, ?, ?)
+                 """)) {
+            statement.setString(1, minecraftUuid.toString());
+            statement.setString(2, nickname);
+            statement.setString(3, passwordHasher.hash(AUTO_AUTH_PASSWORD));
+            statement.setString(4, Instant.now().toString());
+            statement.setString(5, Instant.now().toString());
+            statement.executeUpdate();
+        } catch (SQLException exception) {
+            throw new IllegalStateException("Failed to create auto account", exception);
+        }
+        LOGGER.info("Auto-created account for {}", nickname);
+        return findAccount(minecraftUuid)
+            .orElseThrow(() -> new IllegalStateException("Auto-created account is missing for " + minecraftUuid));
+    }
+
+    private AccountRecord withNickname(AccountRecord record, String nickname) {
+        if (record.nickname().equals(nickname)) {
+            return record;
+        }
+        updateNickname(record.id(), nickname);
+        return new AccountRecord(record.id(), record.minecraftUuid(), nickname, record.passwordHash());
     }
 
     private void updateNickname(long accountId, String nickname) {

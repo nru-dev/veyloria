@@ -2,6 +2,7 @@ package dev.laakirun.veyloria.common.model;
 
 public enum Rarity {
     COMMON(1.0D),
+    UNCOMMON(1.15D),
     RARE(1.2D),
     EPIC(1.5D),
     LEGENDARY(1.9D);

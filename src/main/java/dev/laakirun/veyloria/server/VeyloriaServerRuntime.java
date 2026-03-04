@@ -10,10 +10,13 @@ import dev.laakirun.veyloria.server.db.DatabaseManager;
 import dev.laakirun.veyloria.server.db.MigrationService;
 import dev.laakirun.veyloria.server.db.SeedImporter;
 import dev.laakirun.veyloria.server.game.AuthLockService;
+import dev.laakirun.veyloria.server.game.GearDropService;
 import dev.laakirun.veyloria.server.game.ItemFactory;
 import dev.laakirun.veyloria.server.game.LootService;
 import dev.laakirun.veyloria.server.game.MobSpawnService;
+import dev.laakirun.veyloria.server.game.PartyService;
 import dev.laakirun.veyloria.server.game.PlayerStatService;
+import dev.laakirun.veyloria.server.game.TestWorldLayoutService;
 import dev.laakirun.veyloria.server.profile.CharacterService;
 import dev.laakirun.veyloria.server.profile.LevelService;
 
@@ -21,7 +24,8 @@ public final class VeyloriaServerRuntime {
     private static final VeyloriaServerRuntime INSTANCE = new VeyloriaServerRuntime();
 
     private ServerConfig serverConfig;
-    private RatesConfig ratesConfig;
+    private RatesConfig baseRatesConfig;
+    private volatile RatesConfig ratesConfig;
     private DatabaseManager databaseManager;
     private ContentService contentService;
     private AuthService authService;
@@ -32,6 +36,9 @@ public final class VeyloriaServerRuntime {
     private ItemFactory itemFactory;
     private LootService lootService;
     private MobSpawnService mobSpawnService;
+    private TestWorldLayoutService testWorldLayoutService;
+    private PartyService partyService;
+    private GearDropService gearDropService;
 
     private VeyloriaServerRuntime() {
     }
@@ -42,6 +49,7 @@ public final class VeyloriaServerRuntime {
 
     public void initialize(ServerConfig serverConfig, RatesConfig ratesConfig) {
         this.serverConfig = serverConfig;
+        this.baseRatesConfig = ratesConfig;
         this.ratesConfig = ratesConfig;
         this.databaseManager = new DatabaseManager(serverConfig);
         this.databaseManager.initialize();
@@ -57,6 +65,9 @@ public final class VeyloriaServerRuntime {
         this.itemFactory = new ItemFactory();
         this.lootService = new LootService(contentService);
         this.mobSpawnService = new MobSpawnService();
+        this.testWorldLayoutService = new TestWorldLayoutService();
+        this.partyService = new PartyService();
+        this.gearDropService = new GearDropService();
     }
 
     public ServerConfig serverConfig() {
@@ -65,6 +76,18 @@ public final class VeyloriaServerRuntime {
 
     public RatesConfig ratesConfig() {
         return ratesConfig;
+    }
+
+    public RatesConfig baseRatesConfig() {
+        return baseRatesConfig;
+    }
+
+    public void overrideRates(RatesConfig ratesConfig) {
+        this.ratesConfig = ratesConfig;
+    }
+
+    public void resetRatesOverrides() {
+        this.ratesConfig = baseRatesConfig;
     }
 
     public DatabaseManager databaseManager() {
@@ -105,5 +128,17 @@ public final class VeyloriaServerRuntime {
 
     public MobSpawnService mobSpawnService() {
         return mobSpawnService;
+    }
+
+    public TestWorldLayoutService testWorldLayoutService() {
+        return testWorldLayoutService;
+    }
+
+    public PartyService partyService() {
+        return partyService;
+    }
+
+    public GearDropService gearDropService() {
+        return gearDropService;
     }
 }

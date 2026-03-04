@@ -6,26 +6,19 @@ import dev.laakirun.veyloria.common.config.ServerConfig;
 import dev.laakirun.veyloria.common.config.VeyloriaPaths;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.Writer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayDeque;
+import java.util.Deque;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.yaml.snakeyaml.DumperOptions;
-import org.yaml.snakeyaml.Yaml;
 
 public final class ConfigService {
     private static final Logger LOGGER = LoggerFactory.getLogger("veyloria.db");
-    private final Yaml yaml;
-
-    public ConfigService() {
-        DumperOptions options = new DumperOptions();
-        options.setPrettyFlow(true);
-        options.setDefaultFlowStyle(DumperOptions.FlowStyle.BLOCK);
-        this.yaml = new Yaml(options);
-    }
 
     public ServerConfig loadServerConfig() {
         Path configPath = VeyloriaPaths.configDir().resolve("server.yml");
@@ -86,12 +79,117 @@ public final class ConfigService {
 
     @SuppressWarnings("unchecked")
     private Map<String, Object> readYaml(Path configPath) {
-        try (InputStream stream = Files.newInputStream(configPath)) {
-            Object loaded = yaml.load(stream);
-            return loaded instanceof Map<?, ?> map ? (Map<String, Object>) map : Map.of();
+        try {
+            List<String> lines = Files.readAllLines(configPath, StandardCharsets.UTF_8);
+            Map<String, Object> parsed = parseSimpleYaml(lines);
+            return parsed.isEmpty() ? Map.of() : parsed;
         } catch (IOException exception) {
             throw new IllegalStateException("Failed to load YAML " + configPath, exception);
         }
+    }
+
+    private static Map<String, Object> parseSimpleYaml(List<String> lines) {
+        record Node(int indent, Map<String, Object> map) {
+        }
+
+        Map<String, Object> root = new LinkedHashMap<>();
+        Deque<Node> stack = new ArrayDeque<>();
+        stack.push(new Node(-1, root));
+
+        for (String rawLine : lines) {
+            if (rawLine == null) {
+                continue;
+            }
+            String line = rawLine.replace('\t', ' ');
+            String trimmed = line.trim();
+            if (trimmed.isEmpty() || trimmed.startsWith("#")) {
+                continue;
+            }
+            int delimiter = trimmed.indexOf(':');
+            if (delimiter <= 0) {
+                continue;
+            }
+
+            int indent = leadingSpaces(line);
+            while (stack.size() > 1 && indent <= stack.peek().indent()) {
+                stack.pop();
+            }
+            Map<String, Object> current = stack.peek().map();
+
+            String key = trimmed.substring(0, delimiter).trim();
+            String rawValue = trimmed.substring(delimiter + 1).trim();
+            String value = stripInlineComment(rawValue).trim();
+
+            if (value.isEmpty()) {
+                Map<String, Object> nested = new LinkedHashMap<>();
+                current.put(key, nested);
+                stack.push(new Node(indent, nested));
+                continue;
+            }
+            current.put(key, parseScalar(value));
+        }
+
+        return root;
+    }
+
+    private static int leadingSpaces(String value) {
+        int index = 0;
+        while (index < value.length() && value.charAt(index) == ' ') {
+            index++;
+        }
+        return index;
+    }
+
+    private static String stripInlineComment(String value) {
+        boolean inSingle = false;
+        boolean inDouble = false;
+        for (int index = 0; index < value.length(); index++) {
+            char current = value.charAt(index);
+            if (current == '\'' && !inDouble) {
+                inSingle = !inSingle;
+                continue;
+            }
+            if (current == '"' && !inSingle) {
+                inDouble = !inDouble;
+                continue;
+            }
+            if (!inSingle && !inDouble && current == '#') {
+                if (index == 0 || Character.isWhitespace(value.charAt(index - 1))) {
+                    return value.substring(0, index);
+                }
+            }
+        }
+        return value;
+    }
+
+    private static Object parseScalar(String raw) {
+        String value = unquote(raw);
+        if ("true".equalsIgnoreCase(value)) {
+            return Boolean.TRUE;
+        }
+        if ("false".equalsIgnoreCase(value)) {
+            return Boolean.FALSE;
+        }
+        try {
+            if (value.contains(".") || value.contains("e") || value.contains("E")) {
+                return Double.parseDouble(value);
+            }
+            return Integer.parseInt(value);
+        } catch (NumberFormatException ignored) {
+            return value;
+        }
+    }
+
+    private static String unquote(String value) {
+        if (value.length() < 2) {
+            return value;
+        }
+        char first = value.charAt(0);
+        char last = value.charAt(value.length() - 1);
+        if ((first == '"' && last == '"') || (first == '\'' && last == '\'')) {
+            return value.substring(1, value.length() - 1);
+        }
+        return value;
     }
 
     @SuppressWarnings("unchecked")

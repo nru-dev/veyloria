@@ -1,6 +1,90 @@
 [
-  { "name": "starter_wolves", "drop_slots": 2 },
-  { "name": "graveyard_undead", "drop_slots": 2 },
-  { "name": "elite_camp", "drop_slots": 3 },
-  { "name": "boss_warlord", "drop_slots": 4 }
+  {
+    "name": "z1_friendly",
+    "drop_slots": 2
+  },
+  {
+    "name": "z1_neutral",
+    "drop_slots": 2
+  },
+  {
+    "name": "z1_hostile",
+    "drop_slots": 2
+  },
+  {
+    "name": "z1_elite",
+    "drop_slots": 3
+  },
+  {
+    "name": "z2_normal",
+    "drop_slots": 2
+  },
+  {
+    "name": "z2_elite",
+    "drop_slots": 3
+  },
+  {
+    "name": "z2_boss",
+    "drop_slots": 4
+  },
+  {
+    "name": "z3_normal",
+    "drop_slots": 2
+  },
+  {
+    "name": "z3_elite",
+    "drop_slots": 3
+  },
+  {
+    "name": "z3_boss",
+    "drop_slots": 4
+  },
+  {
+    "name": "z4_normal",
+    "drop_slots": 2
+  },
+  {
+    "name": "z4_elite",
+    "drop_slots": 3
+  },
+  {
+    "name": "z4_boss",
+    "drop_slots": 4
+  },
+  {
+    "name": "z5_normal",
+    "drop_slots": 2
+  },
+  {
+    "name": "z5_elite",
+    "drop_slots": 3
+  },
+  {
+    "name": "z5_boss",
+    "drop_slots": 4
+  },
+  {
+    "name": "z6_normal",
+    "drop_slots": 2
+  },
+  {
+    "name": "z6_elite",
+    "drop_slots": 3
+  },
+  {
+    "name": "z6_boss",
+    "drop_slots": 4
+  },
+  {
+    "name": "z7_normal",
+    "drop_slots": 2
+  },
+  {
+    "name": "z7_elite",
+    "drop_slots": 3
+  },
+  {
+    "name": "z7_boss",
+    "drop_slots": 4
+  }
 ]

@@ -66,10 +66,31 @@
 - Стек: Java 21, NeoForge (Minecraft 1.21.1), Gradle.
 - Архитектура: один модуль с жёстким разделением пакетов:
   - `common` (общие модели/константы/данные)
-  - `server` (авторитетная игровая логика, auth, БД, spawn/combat/loot)
+  - `server` (авторитетная игровая логика, профили/сессии, БД, spawn/combat/loot)
   - `client` (UI/HUD/визуальная обратная связь)
 - Хранение: SQLite + миграции + импорт seed-данных при старте сервера.
 - Цель MVP: рабочий вертикальный срез для кооперативного теста, не полноценная MMORPG.
+
+## Актуальный Функционал (для быстрого ознакомления)
+- Тестовый мир: 7 зон по северу (`1-10` ... `70-80`), дорога и безопасный коридор, разделители из белой шерсти.
+- Спавн только кастомных мобов; ванильный спавн мобов отключён.
+- Бой сервер-авторитетный: threat, evade, leash, party XP-share в рамках одной зоны.
+- Party runtime: `/party` и `/p` с подкомандами `add/kick/leave/help`, лимит группы 5, лидер-правила на add/kick.
+- Ручная авторизация отключена: аккаунт/сессия создаются автоматически при входе игрока.
+- Дроп экипировки серверный: уровни предметов, редкости, архетипы брони и 4 типа оружия.
+- Мана есть только у игроков, у которых в руках есть оружие, реально использующее ману (`manaCost > 0`).
+- Клиент показывает:
+  - нижний HUD (медь/мана/уведомления),
+  - надголовные бары игроков (`HP` + `MP`) в неймплейте.
+
+## Ключевые Точки Кода
+- Серверный runtime и сервисы: `src/main/java/dev/laakirun/veyloria/server`
+- Ключевая серверная игровая логика: `src/main/java/dev/laakirun/veyloria/server/game/VeyloriaServerEvents.java`
+- Сервис групп/лидера: `src/main/java/dev/laakirun/veyloria/server/game/PartyService.java`
+- Спавн/поведение мобов: `src/main/java/dev/laakirun/veyloria/server/game/MobSpawnService.java`
+- Генерация дропа экипировки: `src/main/java/dev/laakirun/veyloria/server/game/GearDropService.java`
+- Клиентский HUD и маркеры: `src/main/java/dev/laakirun/veyloria/client/VeyloriaClientEvents.java`
+- Клиентское состояние интерфейса: `src/main/java/dev/laakirun/veyloria/client/VeyloriaClientState.java`
 
 ## Непереговорные Инженерные Правила
 - Сервер авторитетен для игровой логики. Клиент не источник истины.
