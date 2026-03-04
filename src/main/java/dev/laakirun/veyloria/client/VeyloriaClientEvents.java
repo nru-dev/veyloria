@@ -180,38 +180,38 @@ public final class VeyloriaClientEvents {
             return;
         }
         if (marker.startsWith("[veyloria:profile]")) {
-            state.setCopper(parseInt(marker, "copper"));
-            state.setMana(parseInt(marker, "mana"), parseInt(marker, "manaMax"));
+            state.setCopper(parseInt(fieldValue(marker, "copper")));
+            state.setMana(parseInt(fieldValue(marker, "mana")), parseInt(fieldValue(marker, "manaMax")));
             return;
         }
         if (marker.startsWith("[veyloria:bars]")) {
-            UUID playerUuid = parseUuid(marker, "uuid");
+            UUID playerUuid = parseUuid(fieldValue(marker, "uuid"));
             if (playerUuid != null) {
                 state.setPlayerBars(
                     playerUuid,
-                    parseInt(marker, "hp"),
-                    parseInt(marker, "hpMax"),
-                    parseInt(marker, "mana"),
-                    parseInt(marker, "manaMax"),
+                    parseInt(fieldValue(marker, "hp")),
+                    parseInt(fieldValue(marker, "hpMax")),
+                    parseInt(fieldValue(marker, "mana")),
+                    parseInt(fieldValue(marker, "manaMax")),
                     tickNow() + 60
                 );
             }
             return;
         }
         if (marker.startsWith("[veyloria:gain]")) {
-            int xp = parseInt(marker, "xp");
-            int copper = parseInt(marker, "copper");
+            int xp = parseInt(fieldValue(marker, "xp"));
+            int copper = parseInt(fieldValue(marker, "copper"));
             state.pushNotification("+" + xp + " опыта, +" + copper + " меди", tickNow() + 60);
             return;
         }
         if (marker.startsWith("[veyloria:loot]")) {
-            String name = parseString(marker, "name");
-            int quantity = parseInt(marker, "quantity");
+            String name = fieldValue(marker, "name");
+            int quantity = parseInt(fieldValue(marker, "quantity"));
             state.pushNotification("Добыча: " + name + " x" + quantity, tickNow() + 80);
             return;
         }
         if (marker.startsWith("[veyloria:error]")) {
-            state.setLastError(parseString(marker, "message"));
+            state.setLastError(fieldValue(marker, "message"));
         }
     }
 
@@ -219,26 +219,29 @@ public final class VeyloriaClientEvents {
         return Minecraft.getInstance().player == null ? 0 : Minecraft.getInstance().player.tickCount;
     }
 
-    private static int parseInt(String marker, String key) {
+    private static int parseInt(String raw) {
         try {
-            return Integer.parseInt(parseString(marker, key));
+            return Integer.parseInt(raw);
         } catch (NumberFormatException exception) {
             return 0;
         }
     }
 
-    private static String parseString(String marker, String key) {
-        String[] parts = marker.split("\\|");
-        for (String part : parts) {
-            if (part.startsWith(key + "=")) {
-                return part.substring((key + "=").length());
-            }
+    private static String fieldValue(String marker, String key) {
+        String needle = "|" + key + "=";
+        int start = marker.indexOf(needle);
+        if (start < 0) {
+            return "";
         }
-        return "";
+        int valueStart = start + needle.length();
+        int end = marker.indexOf('|', valueStart);
+        if (end < 0) {
+            return marker.substring(valueStart);
+        }
+        return marker.substring(valueStart, end);
     }
 
-    private static UUID parseUuid(String marker, String key) {
-        String raw = parseString(marker, key);
+    private static UUID parseUuid(String raw) {
         if (raw.isBlank()) {
             return null;
         }

@@ -27,6 +27,7 @@ import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.level.ChunkPos;
+import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -57,27 +58,37 @@ public final class MobSpawnService {
         ensureSpawnIndex();
         long gameTime = server.overworld().getGameTime();
         clearExpiredNeutralAggro(gameTime);
+        VeyloriaServerRuntime runtime = VeyloriaServerRuntime.instance();
+        int maxActivePerDimension = runtime.serverConfig().maxActiveMobsPerDimension();
+        double activationRadius = runtime.serverConfig().spawnActivationRadius();
+        double activationRadiusSqr = activationRadius * activationRadius;
 
         for (ServerLevel level : server.getAllLevels()) {
             cleanupTrackedMobs(level);
-            spawnRareGroupsOnStartup(level, gameTime);
+            List<ServerPlayer> authenticatedPlayers = authenticatedPlayers(level);
+            Map<Long, Integer> aliveByGroup = aliveCountsByGroup(level);
+            spawnRareGroupsOnStartup(level, gameTime, aliveByGroup);
             updateHostilityTargets(level, gameTime);
             maintainCombatDistance(level, gameTime);
             enforceLeashes(level);
 
-            int activeInDimension = countActiveInDimension(level);
-            for (MobSpawnGroup group : candidateGroups(level)) {
-                if (activeInDimension >= VeyloriaServerRuntime.instance().serverConfig().maxActiveMobsPerDimension()) {
+            if (authenticatedPlayers.isEmpty()) {
+                continue;
+            }
+
+            int activeInDimension = totalAlive(aliveByGroup);
+            for (MobSpawnGroup group : candidateGroups(level, authenticatedPlayers, activationRadius)) {
+                if (activeInDimension >= maxActivePerDimension) {
                     break;
                 }
-                if (!hasAuthenticatedPlayersNearby(level, group)) {
+                if (!hasAuthenticatedPlayersNearby(authenticatedPlayers, group, activationRadiusSqr)) {
                     continue;
                 }
                 long nextTick = nextSpawnTickByGroup.getOrDefault(group.id(), 0L);
                 if (gameTime < nextTick) {
                     continue;
                 }
-                int alive = countAlive(level, group.id());
+                int alive = aliveByGroup.getOrDefault(group.id(), 0);
                 if (alive >= group.minAlive()) {
                     continue;
                 }
@@ -90,8 +101,9 @@ public final class MobSpawnService {
                     continue;
                 }
                 activeInDimension += spawned;
-                MobTemplate template = VeyloriaServerRuntime.instance().contentService().mobTemplate(group.mobTemplateId());
-                nextSpawnTickByGroup.put(group.id(), gameTime + adjustedRespawnTicks(group, VeyloriaServerRuntime.instance().contentService().mobTemplate(group.mobTemplateId())));
+                aliveByGroup.merge(group.id(), spawned, Integer::sum);
+                MobTemplate template = runtime.contentService().mobTemplate(group.mobTemplateId());
+                nextSpawnTickByGroup.put(group.id(), gameTime + adjustedRespawnTicks(group, template));
                 LOGGER.debug("Spawned {} mobs in group {} ({}) at {}", spawned, group.id(),
                     template == null ? "unknown_template" : template.code(), level.dimension().location());
             }
@@ -194,17 +206,14 @@ public final class MobSpawnService {
         return players;
     }
 
-    private List<MobSpawnGroup> candidateGroups(ServerLevel level) {
+    private List<MobSpawnGroup> candidateGroups(ServerLevel level, List<ServerPlayer> authenticatedPlayers, double activationRadius) {
         Map<Long, List<MobSpawnGroup>> byChunk = spawnIndexByDimensionChunk.get(level.dimension().location().toString());
-        if (byChunk == null || byChunk.isEmpty()) {
+        if (byChunk == null || byChunk.isEmpty() || authenticatedPlayers.isEmpty()) {
             return List.of();
         }
         Map<Long, MobSpawnGroup> candidates = new LinkedHashMap<>();
-        int chunkRadius = Math.max(1, (int) Math.ceil(VeyloriaServerRuntime.instance().serverConfig().spawnActivationRadius() / 16.0D));
-        for (ServerPlayer player : level.players()) {
-            if (!VeyloriaServerRuntime.instance().authService().sessionManager().isAuthenticated(player.getUUID())) {
-                continue;
-            }
+        int chunkRadius = Math.max(1, (int) Math.ceil(activationRadius / 16.0D));
+        for (ServerPlayer player : authenticatedPlayers) {
             ChunkPos playerChunk = player.chunkPosition();
             for (int dx = -chunkRadius; dx <= chunkRadius; dx++) {
                 for (int dz = -chunkRadius; dz <= chunkRadius; dz++) {
@@ -221,22 +230,28 @@ public final class MobSpawnService {
         return List.copyOf(candidates.values());
     }
 
-    private boolean hasAuthenticatedPlayersNearby(ServerLevel level, MobSpawnGroup group) {
-        double radius = VeyloriaServerRuntime.instance().serverConfig().spawnActivationRadius();
-        for (ServerPlayer player : level.players()) {
-            if (!VeyloriaServerRuntime.instance().authService().sessionManager().isAuthenticated(player.getUUID())) {
-                continue;
-            }
-            if (player.distanceToSqr(group.centerX(), group.centerY(), group.centerZ()) <= radius * radius) {
+    private boolean hasAuthenticatedPlayersNearby(List<ServerPlayer> authenticatedPlayers, MobSpawnGroup group, double radiusSqr) {
+        for (ServerPlayer player : authenticatedPlayers) {
+            if (player.distanceToSqr(group.centerX(), group.centerY(), group.centerZ()) <= radiusSqr) {
                 return true;
             }
         }
         return false;
     }
 
-    private int countActiveInDimension(ServerLevel level) {
+    private List<ServerPlayer> authenticatedPlayers(ServerLevel level) {
+        List<ServerPlayer> players = new ArrayList<>();
+        for (ServerPlayer player : level.players()) {
+            if (VeyloriaServerRuntime.instance().authService().sessionManager().isAuthenticated(player.getUUID())) {
+                players.add(player);
+            }
+        }
+        return players;
+    }
+
+    private Map<Long, Integer> aliveCountsByGroup(ServerLevel level) {
+        Map<Long, Integer> aliveByGroup = new HashMap<>();
         String dimensionId = level.dimension().location().toString();
-        int count = 0;
         for (Map.Entry<UUID, MobInstance> entry : trackedMobs.entrySet()) {
             MobSpawnGroup group = VeyloriaServerRuntime.instance().contentService().spawnGroup(entry.getValue().spawnGroupId());
             if (group == null || !dimensionId.equals(group.dimension())) {
@@ -244,10 +259,18 @@ public final class MobSpawnService {
             }
             Entity entity = level.getEntity(entry.getKey());
             if (entity instanceof LivingEntity living && living.isAlive()) {
-                count++;
+                aliveByGroup.merge(group.id(), 1, Integer::sum);
             }
         }
-        return count;
+        return aliveByGroup;
+    }
+
+    private int totalAlive(Map<Long, Integer> aliveByGroup) {
+        int total = 0;
+        for (Integer count : aliveByGroup.values()) {
+            total += count;
+        }
+        return total;
     }
 
     private void cleanupTrackedMobs(ServerLevel level) {
@@ -273,19 +296,6 @@ public final class MobSpawnService {
             blockedAttackSinceTick.remove(mobUuid);
             evadingUntilTick.remove(mobUuid);
         }
-    }
-
-    private int countAlive(ServerLevel level, long spawnGroupId) {
-        int count = 0;
-        for (MobInstance instance : trackedMobs.values()) {
-            if (instance.spawnGroupId() != spawnGroupId) {
-                continue;
-            }
-            if (level.getEntity(instance.entityUuid()) instanceof LivingEntity living && living.isAlive()) {
-                count++;
-            }
-        }
-        return count;
     }
 
     private void ensureSpawnIndex() {
@@ -519,25 +529,21 @@ public final class MobSpawnService {
     }
 
     private LivingEntity findNearestMobByHostility(ServerLevel level, Mob source, HostilityType desiredHostility, double radius) {
-        double maxDistanceSqr = Math.max(1.0D, radius * radius);
+        double safeRadius = Math.max(1.0D, radius);
+        double maxDistanceSqr = safeRadius * safeRadius;
         double bestDistance = maxDistanceSqr;
         LivingEntity selected = null;
-        for (UUID candidateUuid : trackedMobs.keySet()) {
-            if (candidateUuid.equals(source.getUUID())) {
-                continue;
-            }
-            MobTemplate candidateTemplate = template(candidateUuid);
+        AABB searchBounds = source.getBoundingBox().inflate(safeRadius);
+        for (Mob candidate : level.getEntitiesOfClass(Mob.class, searchBounds,
+            mob -> mob.isAlive() && !mob.getUUID().equals(source.getUUID()))) {
+            MobTemplate candidateTemplate = template(candidate.getUUID());
             if (candidateTemplate == null || candidateTemplate.hostilityType() != desiredHostility) {
                 continue;
             }
-            Entity candidateEntity = level.getEntity(candidateUuid);
-            if (!(candidateEntity instanceof LivingEntity living) || !living.isAlive()) {
-                continue;
-            }
-            double distance = source.distanceToSqr(living);
+            double distance = source.distanceToSqr(candidate);
             if (distance <= bestDistance) {
                 bestDistance = distance;
-                selected = living;
+                selected = candidate;
             }
         }
         return selected;
@@ -640,10 +646,10 @@ public final class MobSpawnService {
         }
     }
 
-    private void spawnRareGroupsOnStartup(ServerLevel level, long gameTime) {
+    private int spawnRareGroupsOnStartup(ServerLevel level, long gameTime, Map<Long, Integer> aliveByGroup) {
         String dimensionId = level.dimension().location().toString();
         if (startupRareSpawnsDone.putIfAbsent(dimensionId, true) != null) {
-            return;
+            return 0;
         }
         int spawnedTotal = 0;
         for (MobSpawnGroup group : VeyloriaServerRuntime.instance().contentService().spawnGroups()) {
@@ -655,7 +661,7 @@ public final class MobSpawnService {
                 continue;
             }
             level.getChunk(blockToChunk(group.centerX()), blockToChunk(group.centerZ()));
-            int alive = countAlive(level, group.id());
+            int alive = aliveByGroup.getOrDefault(group.id(), 0);
             if (alive >= group.minAlive()) {
                 continue;
             }
@@ -668,9 +674,11 @@ public final class MobSpawnService {
                 continue;
             }
             nextSpawnTickByGroup.put(group.id(), gameTime + adjustedRespawnTicks(group, template));
+            aliveByGroup.merge(group.id(), spawned, Integer::sum);
             spawnedTotal += spawned;
         }
         LOGGER.info("Startup rare spawn bootstrap in {} produced {} entities", dimensionId, spawnedTotal);
+        return spawnedTotal;
     }
 
     private boolean isStartupRareGroup(MobSpawnGroup group, MobTemplate template) {

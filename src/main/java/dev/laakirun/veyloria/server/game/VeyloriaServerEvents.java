@@ -60,10 +60,14 @@ import org.slf4j.LoggerFactory;
 public final class VeyloriaServerEvents {
     private static final Logger COMBAT_LOGGER = LoggerFactory.getLogger("veyloria.combat");
     private static final int ATTACK_COOLDOWN_TICKS = 20;
+    private static final long PROFILE_SYNC_INTERVAL_TICKS = 20L;
+    private static final double BARS_VIEW_DISTANCE_SQR = 96.0D * 96.0D;
+    private static final long BARS_HEARTBEAT_TICKS = 40L;
     private final java.util.Map<UUID, Long> lastPlayerAttackTick = new ConcurrentHashMap<>();
     private final java.util.Map<UUID, Long> lastSkillUseTick = new ConcurrentHashMap<>();
     private final java.util.Map<UUID, Double> manaByPlayer = new ConcurrentHashMap<>();
     private final java.util.Map<UUID, HealingPool> activeHealingPools = new ConcurrentHashMap<>();
+    private final java.util.Map<BarsPairKey, BarsCacheEntry> barCacheByViewerSubject = new ConcurrentHashMap<>();
 
     private long lastSpawnTick;
     private long lastProfileTick;
@@ -153,6 +157,7 @@ public final class VeyloriaServerEvents {
         lastPlayerAttackTick.remove(player.getUUID());
         lastSkillUseTick.remove(player.getUUID());
         manaByPlayer.remove(player.getUUID());
+        invalidateBarsCache(player.getUUID());
     }
 
     @SubscribeEvent
@@ -166,11 +171,13 @@ public final class VeyloriaServerEvents {
         lastSkillUseTick.clear();
         manaByPlayer.clear();
         activeHealingPools.clear();
+        barCacheByViewerSubject.clear();
     }
 
     @SubscribeEvent
     public void onServerTick(ServerTickEvent.Post event) {
         long gameTime = event.getServer().overworld().getGameTime();
+        boolean shouldSyncProfile = gameTime - lastProfileTick >= PROFILE_SYNC_INTERVAL_TICKS;
         VeyloriaServerRuntime.instance().testWorldLayoutService().tick(event.getServer());
         VeyloriaServerRuntime.instance().gearDropService().tick(event.getServer());
         for (ServerPlayer player : event.getServer().getPlayerList().getPlayers()) {
@@ -179,7 +186,7 @@ public final class VeyloriaServerEvents {
             enforceRequiredLevel(player);
             enforceTwoHandedRule(player);
             VeyloriaServerRuntime.instance().authLockService().enforce(player);
-            if (gameTime - lastProfileTick >= 20 && VeyloriaServerRuntime.instance().authService().sessionManager().isAuthenticated(player.getUUID())) {
+            if (shouldSyncProfile && isAuthenticated(player)) {
                 CharacterProfile profile = VeyloriaServerRuntime.instance().characterService().loadedProfile(player.getUUID());
                 if (profile != null) {
                     syncPlayerHud(player, profile);
@@ -187,8 +194,8 @@ public final class VeyloriaServerEvents {
             }
         }
         tickManaAndHealingPools(event.getServer(), gameTime);
-        if (gameTime - lastProfileTick >= 20) {
-            broadcastPlayerBars(event.getServer());
+        if (shouldSyncProfile) {
+            broadcastPlayerBars(event.getServer(), gameTime);
             lastProfileTick = gameTime;
         }
         if (gameTime - lastSpawnTick >= VeyloriaServerRuntime.instance().serverConfig().spawnTickInterval()) {
@@ -696,8 +703,12 @@ public final class VeyloriaServerEvents {
     }
 
     private static void disableHunger(ServerPlayer player) {
-        player.getFoodData().setFoodLevel(20);
-        player.getFoodData().setSaturation(20.0F);
+        if (player.getFoodData().getFoodLevel() != 20) {
+            player.getFoodData().setFoodLevel(20);
+        }
+        if (player.getFoodData().getSaturationLevel() < 20.0F) {
+            player.getFoodData().setSaturation(20.0F);
+        }
         player.getFoodData().setExhaustion(0.0F);
     }
 
@@ -1069,36 +1080,73 @@ public final class VeyloriaServerEvents {
         activeHealingPools.put(UUID.randomUUID(), pool);
     }
 
-    private void broadcastPlayerBars(MinecraftServer server) {
+    private void broadcastPlayerBars(MinecraftServer server, long gameTime) {
         List<ServerPlayer> allPlayers = server.getPlayerList().getPlayers();
-        for (ServerPlayer viewer : allPlayers) {
-            if (!VeyloriaServerRuntime.instance().authService().sessionManager().isAuthenticated(viewer.getUUID())) {
+        java.util.Map<UUID, SubjectBarsSnapshot> subjects = new java.util.HashMap<>();
+        for (ServerPlayer subject : allPlayers) {
+            if (!isAuthenticated(subject)) {
                 continue;
             }
-            for (ServerPlayer subject : allPlayers) {
-                if (!subject.level().dimension().equals(viewer.level().dimension())) {
+            CharacterProfile profile = VeyloriaServerRuntime.instance().characterService().loadedProfile(subject.getUUID());
+            if (profile == null) {
+                continue;
+            }
+            int manaCurrent = 0;
+            int manaMax = 0;
+            if (hasManaWeaponEquipped(subject)) {
+                BaseStatsSnapshot stats = snapshotStats(subject, profile);
+                manaMax = (int) Math.round(maxMana(profile.level(), stats));
+                manaCurrent = (int) Math.round(Math.min(manaMax, manaByPlayer.getOrDefault(subject.getUUID(), (double) manaMax)));
+            }
+            int hpCurrent = (int) Math.ceil(Math.max(0.0D, subject.getHealth()));
+            int hpMax = (int) Math.ceil(Math.max(1.0D, subject.getMaxHealth()));
+            subjects.put(subject.getUUID(), new SubjectBarsSnapshot(
+                subject.getUUID(),
+                subject,
+                subject.level().dimension().location().toString(),
+                new BarsPayload(hpCurrent, hpMax, manaCurrent, manaMax)
+            ));
+        }
+
+        if (subjects.isEmpty()) {
+            barCacheByViewerSubject.clear();
+            return;
+        }
+
+        Set<UUID> activeViewers = new LinkedHashSet<>();
+        for (ServerPlayer viewer : allPlayers) {
+            if (!isAuthenticated(viewer)) {
+                continue;
+            }
+            activeViewers.add(viewer.getUUID());
+            String viewerDimension = viewer.level().dimension().location().toString();
+            for (SubjectBarsSnapshot subject : subjects.values()) {
+                if (!viewerDimension.equals(subject.dimensionId())) {
                     continue;
                 }
-                if (!subject.getUUID().equals(viewer.getUUID()) && viewer.distanceToSqr(subject) > 96.0D * 96.0D) {
+                if (!subject.subjectUuid().equals(viewer.getUUID()) && viewer.distanceToSqr(subject.player()) > BARS_VIEW_DISTANCE_SQR) {
                     continue;
                 }
-                CharacterProfile profile = VeyloriaServerRuntime.instance().characterService().loadedProfile(subject.getUUID());
-                if (profile == null) {
+                BarsPairKey key = new BarsPairKey(viewer.getUUID(), subject.subjectUuid());
+                BarsCacheEntry cached = barCacheByViewerSubject.get(key);
+                if (cached != null
+                    && cached.payload().equals(subject.payload())
+                    && gameTime - cached.lastSentTick() < BARS_HEARTBEAT_TICKS) {
                     continue;
                 }
-                boolean manaEnabled = hasManaWeaponEquipped(subject);
-                int manaCurrent = 0;
-                int manaMax = 0;
-                if (manaEnabled) {
-                    BaseStatsSnapshot stats = snapshotStats(subject, profile);
-                    manaMax = (int) Math.round(maxMana(profile.level(), stats));
-                    manaCurrent = (int) Math.round(Math.min(manaMax, manaByPlayer.getOrDefault(subject.getUUID(), (double) manaMax)));
-                }
-                int hpCurrent = (int) Math.ceil(Math.max(0.0D, subject.getHealth()));
-                int hpMax = (int) Math.ceil(Math.max(1.0D, subject.getMaxHealth()));
-                ServerMarkers.sendBars(viewer, subject.getUUID(), hpCurrent, hpMax, manaCurrent, manaMax);
+                BarsPayload payload = subject.payload();
+                ServerMarkers.sendBars(viewer, subject.subjectUuid(), payload.hp(), payload.hpMax(), payload.mana(), payload.manaMax());
+                barCacheByViewerSubject.put(key, new BarsCacheEntry(payload, gameTime));
             }
         }
+
+        barCacheByViewerSubject.keySet().removeIf(key ->
+            !activeViewers.contains(key.viewerUuid()) || !subjects.containsKey(key.subjectUuid()));
+    }
+
+    private void invalidateBarsCache(UUID playerUuid) {
+        barCacheByViewerSubject.keySet().removeIf(key ->
+            key.viewerUuid().equals(playerUuid) || key.subjectUuid().equals(playerUuid));
     }
 
     private boolean hasManaWeaponEquipped(ServerPlayer player) {
@@ -1173,6 +1221,18 @@ public final class VeyloriaServerEvents {
     }
 
     private record BaseStatsSnapshot(int strength, int stamina, int armor, int agility, int intellect) {
+    }
+
+    private record BarsPayload(int hp, int hpMax, int mana, int manaMax) {
+    }
+
+    private record SubjectBarsSnapshot(UUID subjectUuid, ServerPlayer player, String dimensionId, BarsPayload payload) {
+    }
+
+    private record BarsPairKey(UUID viewerUuid, UUID subjectUuid) {
+    }
+
+    private record BarsCacheEntry(BarsPayload payload, long lastSentTick) {
     }
 
     private record HealingPool(
