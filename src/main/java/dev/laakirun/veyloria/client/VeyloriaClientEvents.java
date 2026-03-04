@@ -45,12 +45,6 @@ public final class VeyloriaClientEvents {
             return;
         }
         VeyloriaClientState.instance().prune(minecraft.player.tickCount);
-        if (VeyloriaClientState.instance().authRequired() && !(minecraft.screen instanceof AuthScreen)) {
-            minecraft.setScreen(new AuthScreen());
-        }
-        if (VeyloriaClientState.instance().authenticated() && minecraft.screen instanceof AuthScreen) {
-            minecraft.setScreen(null);
-        }
     }
 
     @SubscribeEvent
@@ -170,15 +164,6 @@ public final class VeyloriaClientEvents {
 
     private static void handleMarker(String marker) {
         VeyloriaClientState state = VeyloriaClientState.instance();
-        if (marker.startsWith("[veyloria:auth_required]")) {
-            boolean registered = marker.contains("registered=true");
-            state.setAuthRequired(true, registered);
-            return;
-        }
-        if (marker.startsWith("[veyloria:auth_ok]")) {
-            state.setAuthenticated(true);
-            return;
-        }
         if (marker.startsWith("[veyloria:profile]")) {
             state.setCopper(parseInt(fieldValue(marker, "copper")));
             state.setMana(parseInt(fieldValue(marker, "mana")), parseInt(fieldValue(marker, "manaMax")));

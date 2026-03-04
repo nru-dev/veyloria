@@ -29,6 +29,11 @@ public final class TestWorldLayoutService {
     public static final int ROAD_HALF_WIDTH = 2;
     public static final int SAFE_HALF_WIDTH = 7;
     public static final int SPAWN_Z = FIRST_ZONE_SOUTH_Z - 60;
+    public static final int FLAT_BEDROCK_Y = 0;
+    public static final int FLAT_DIRT_MIN_Y = 1;
+    public static final int FLAT_DIRT_MAX_Y = 2;
+    public static final int FLAT_GRASS_Y = 3;
+    public static final int FLAT_SPAWN_Y = FLAT_GRASS_Y + 1;
 
     private static final String[] ZONE_LABELS = {
         "1-10", "10-25", "25-35", "35-45", "45-60", "60-70", "70-80"
@@ -41,6 +46,7 @@ public final class TestWorldLayoutService {
     private static final BlockState ROAD_BLOCK = Blocks.STONE_BRICKS.defaultBlockState();
     private static final BlockState SEPARATOR_BLOCK = Blocks.WHITE_WOOL.defaultBlockState();
     private static final BlockState FENCE_BLOCK = Blocks.OAK_FENCE.defaultBlockState();
+    private static final String TAG_STARTER_SPAWNED = "veyloria_starter_spawned";
 
     private final Set<Long> decoratedOverworldChunks = ConcurrentHashMap.newKeySet();
     private boolean worldConfigured;
@@ -98,17 +104,35 @@ public final class TestWorldLayoutService {
         return ZONE_LABELS[zoneIndex - 1];
     }
 
+    public void ensureStarterSpawn(ServerPlayer player) {
+        if (!(player.level() instanceof ServerLevel level)) {
+            return;
+        }
+        if (!OVERWORLD_DIMENSION.equals(level.dimension().location().toString())) {
+            return;
+        }
+        boolean firstJoin = !player.getPersistentData().getBoolean(TAG_STARTER_SPAWNED);
+        boolean belowSurface = player.getY() < FLAT_SPAWN_Y - 0.5D;
+        if (!firstJoin && !belowSurface) {
+            return;
+        }
+        decorateAroundSpawn(level);
+        BlockPos spawnPos = starterSpawnPos();
+        player.teleportTo(level, spawnPos.getX() + 0.5D, spawnPos.getY(), spawnPos.getZ() + 0.5D, 180.0F, 0.0F);
+        player.setRespawnPosition(level.dimension(), spawnPos, 180.0F, true, false);
+        player.getPersistentData().putBoolean(TAG_STARTER_SPAWNED, true);
+    }
+
     private void configureWorld(ServerLevel overworld, MinecraftServer server) {
         if (worldConfigured) {
             return;
         }
         overworld.getGameRules().getRule(GameRules.RULE_DOMOBSPAWNING).set(false, server);
-        BlockPos spawnPos = overworld.getHeightmapPos(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES,
-            BlockPos.containing(ROAD_CENTER_X, 0, SPAWN_Z));
+        BlockPos spawnPos = starterSpawnPos();
         overworld.setDefaultSpawnPos(spawnPos, 180.0F);
         worldConfigured = true;
-        LOGGER.info("Configured test layout in overworld: zones={}, zone_length={}, zone_width={}, safe_band={}",
-            ZONE_COUNT, ZONE_LENGTH, ZONE_HALF_WIDTH * 2, SAFE_HALF_WIDTH * 2 + 1);
+        LOGGER.info("Configured test layout in overworld: zones={}, zone_length={}, zone_width={}, safe_band={}, spawn=({}, {}, {})",
+            ZONE_COUNT, ZONE_LENGTH, ZONE_HALF_WIDTH * 2, SAFE_HALF_WIDTH * 2 + 1, spawnPos.getX(), spawnPos.getY(), spawnPos.getZ());
     }
 
     private void decorateAroundSpawn(ServerLevel level) {
@@ -170,17 +194,14 @@ public final class TestWorldLayoutService {
                 if (!isManagedNorthSouthBand(z)) {
                     continue;
                 }
+                normalizeFlatColumn(level, x, z);
                 boolean separator = isSeparatorLineZ(z);
                 boolean road = isRoadColumn(x);
                 boolean fence = isPerimeterFence(x, z);
                 if (!separator && !road && !fence) {
                     continue;
                 }
-                BlockPos surface = level.getHeightmapPos(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, BlockPos.containing(x, 0, z));
-                BlockPos ground = surface.below();
-                if (ground.getY() < level.getMinBuildHeight()) {
-                    continue;
-                }
+                BlockPos ground = BlockPos.containing(x, FLAT_GRASS_Y, z);
                 if (fence) {
                     level.setBlock(ground, FENCE_BLOCK, 3);
                     continue;
@@ -207,11 +228,7 @@ public final class TestWorldLayoutService {
     }
 
     private static void placeZoneSign(ServerLevel level, int x, int z, String text) {
-        BlockPos surface = level.getHeightmapPos(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, BlockPos.containing(x, 0, z));
-        BlockPos ground = surface.below();
-        if (ground.getY() < level.getMinBuildHeight()) {
-            return;
-        }
+        BlockPos ground = BlockPos.containing(x, FLAT_GRASS_Y, z);
         BlockPos signPos = ground.above();
         level.setBlock(ground, ROAD_BLOCK, 3);
         level.setBlock(signPos, Blocks.OAK_SIGN.defaultBlockState(), 3);
@@ -286,6 +303,29 @@ public final class TestWorldLayoutService {
         int minX = chunkX << 4;
         int minZ = chunkZ << 4;
         return x >= minX && x <= minX + 15 && z >= minZ && z <= minZ + 15;
+    }
+
+    private static BlockPos starterSpawnPos() {
+        return BlockPos.containing(ROAD_CENTER_X, FLAT_SPAWN_Y, SPAWN_Z);
+    }
+
+    private static void normalizeFlatColumn(ServerLevel level, int x, int z) {
+        BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
+        int topY = level.getHeightmapPos(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, BlockPos.containing(x, 0, z)).getY();
+        for (int y = FLAT_GRASS_Y + 1; y <= topY + 1; y++) {
+            pos.set(x, y, z);
+            if (!level.getBlockState(pos).isAir()) {
+                level.setBlock(pos, Blocks.AIR.defaultBlockState(), 3);
+            }
+        }
+        pos.set(x, FLAT_BEDROCK_Y, z);
+        level.setBlock(pos, Blocks.BEDROCK.defaultBlockState(), 3);
+        for (int y = FLAT_DIRT_MIN_Y; y <= FLAT_DIRT_MAX_Y; y++) {
+            pos.set(x, y, z);
+            level.setBlock(pos, Blocks.DIRT.defaultBlockState(), 3);
+        }
+        pos.set(x, FLAT_GRASS_Y, z);
+        level.setBlock(pos, Blocks.GRASS_BLOCK.defaultBlockState(), 3);
     }
 
     private static long chunkKey(int chunkX, int chunkZ) {

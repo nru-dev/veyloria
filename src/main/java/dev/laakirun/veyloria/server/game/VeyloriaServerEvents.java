@@ -9,8 +9,6 @@ import dev.laakirun.veyloria.common.model.CharacterProfile;
 import dev.laakirun.veyloria.common.model.HostilityType;
 import dev.laakirun.veyloria.common.config.RatesConfig;
 import dev.laakirun.veyloria.server.VeyloriaServerRuntime;
-import dev.laakirun.veyloria.server.auth.AccountRecord;
-import dev.laakirun.veyloria.server.auth.AuthService;
 import dev.laakirun.veyloria.server.content.MobSpawnGroup;
 import dev.laakirun.veyloria.server.content.MobTemplate;
 import dev.laakirun.veyloria.server.profile.ExperienceGainResult;
@@ -49,7 +47,6 @@ import net.neoforged.neoforge.event.entity.living.LivingDeathEvent;
 import net.neoforged.neoforge.event.entity.living.LivingIncomingDamageEvent;
 import net.neoforged.neoforge.event.entity.EntityJoinLevelEvent;
 import net.neoforged.neoforge.event.entity.player.AttackEntityEvent;
-import net.neoforged.neoforge.event.entity.player.PlayerContainerEvent;
 import net.neoforged.neoforge.event.entity.player.PlayerEvent;
 import net.neoforged.neoforge.event.entity.player.PlayerInteractEvent;
 import net.neoforged.neoforge.event.server.ServerStoppingEvent;
@@ -80,24 +77,6 @@ public final class VeyloriaServerEvents {
     public void onRegisterCommands(RegisterCommandsEvent event) {
         event.getDispatcher().register(
             LiteralArgumentBuilder.<CommandSourceStack>literal("veyloria")
-                .then(Commands.literal("register")
-                    .then(Commands.argument("password", StringArgumentType.word())
-                        .executes(context -> {
-                            ServerPlayer player = context.getSource().getPlayerOrException();
-                            String password = StringArgumentType.getString(context, "password");
-                            AuthService.AuthResult result = VeyloriaServerRuntime.instance().authService()
-                                .register(player.getUUID(), player.getGameProfile().getName(), password);
-                            return handleAuthResult(player, result);
-                        })))
-                .then(Commands.literal("login")
-                    .then(Commands.argument("password", StringArgumentType.word())
-                        .executes(context -> {
-                            ServerPlayer player = context.getSource().getPlayerOrException();
-                            String password = StringArgumentType.getString(context, "password");
-                            AuthService.AuthResult result = VeyloriaServerRuntime.instance().authService()
-                                .login(player.getUUID(), player.getGameProfile().getName(), password);
-                            return handleAuthResult(player, result);
-                        })))
                 .then(Commands.literal("rates")
                     .requires(source -> source.hasPermission(2))
                     .then(Commands.literal("show")
@@ -136,13 +115,15 @@ public final class VeyloriaServerEvents {
         if (!(event.getEntity() instanceof ServerPlayer player)) {
             return;
         }
-        VeyloriaServerRuntime.instance().authLockService().lock(player);
+        VeyloriaServerRuntime runtime = VeyloriaServerRuntime.instance();
         enforceBuildMode(player);
-        boolean registered = VeyloriaServerRuntime.instance().authService().findAccount(player.getUUID()).isPresent();
-        ServerMarkers.sendAuthRequired(player, registered);
-        player.sendSystemMessage(Component.literal(registered
-            ? "Откройте окно авторизации Veyloria или используйте /veyloria login <password>"
-            : "Откройте окно авторизации Veyloria или используйте /veyloria register <password>"));
+        var account = runtime.authService().ensureAuthenticated(player.getUUID(), player.getGameProfile().getName());
+        CharacterProfile profile = runtime.characterService().loadedProfile(player.getUUID());
+        if (profile == null) {
+            profile = runtime.characterService().loadOrCreate(account);
+        }
+        runtime.testWorldLayoutService().ensureStarterSpawn(player);
+        syncPlayerHud(player, profile);
     }
 
     @SubscribeEvent
@@ -153,7 +134,6 @@ public final class VeyloriaServerEvents {
         VeyloriaServerRuntime.instance().partyService().removeMember(player.getUUID());
         VeyloriaServerRuntime.instance().authService().logout(player.getUUID());
         VeyloriaServerRuntime.instance().characterService().unload(player.getUUID());
-        VeyloriaServerRuntime.instance().authLockService().unlock(player);
         lastPlayerAttackTick.remove(player.getUUID());
         lastSkillUseTick.remove(player.getUUID());
         manaByPlayer.remove(player.getUUID());
@@ -179,7 +159,6 @@ public final class VeyloriaServerEvents {
         VeyloriaServerRuntime runtime = VeyloriaServerRuntime.instance();
         if (runtime.serverConfig() == null
             || runtime.authService() == null
-            || runtime.authLockService() == null
             || runtime.characterService() == null
             || runtime.mobSpawnService() == null
             || runtime.testWorldLayoutService() == null
@@ -195,7 +174,6 @@ public final class VeyloriaServerEvents {
             enforceBuildMode(player);
             enforceRequiredLevel(player);
             enforceTwoHandedRule(player);
-            runtime.authLockService().enforce(player);
             if (shouldSyncProfile && isAuthenticated(player)) {
                 CharacterProfile profile = runtime.characterService().loadedProfile(player.getUUID());
                 if (profile != null) {
@@ -237,10 +215,6 @@ public final class VeyloriaServerEvents {
     @SubscribeEvent
     public void onLeftClickBlock(PlayerInteractEvent.LeftClickBlock event) {
         if (event.getEntity() instanceof ServerPlayer player) {
-            if (VeyloriaServerRuntime.instance().authLockService().isLocked(player)) {
-                event.setCanceled(true);
-                return;
-            }
             if (!canModifyWorld(player)) {
                 event.setCanceled(true);
             }
@@ -250,10 +224,6 @@ public final class VeyloriaServerEvents {
     @SubscribeEvent
     public void onRightClickBlock(PlayerInteractEvent.RightClickBlock event) {
         if (event.getEntity() instanceof ServerPlayer player) {
-            if (VeyloriaServerRuntime.instance().authLockService().isLocked(player)) {
-                event.setCanceled(true);
-                return;
-            }
             if (!canModifyWorld(player)) {
                 event.setCanceled(true);
             }
@@ -280,9 +250,6 @@ public final class VeyloriaServerEvents {
             return;
         }
         event.setCanceled(true);
-        if (VeyloriaServerRuntime.instance().authLockService().isLocked(player)) {
-            return;
-        }
         if (!(event.getTarget() instanceof LivingEntity target)) {
             return;
         }
@@ -366,10 +333,6 @@ public final class VeyloriaServerEvents {
         }
 
         if (event.getEntity() instanceof ServerPlayer player) {
-            if (VeyloriaServerRuntime.instance().authLockService().isLocked(player)) {
-                event.setCanceled(true);
-                return;
-            }
             if (sourceEntity != null && sourceTemplate != null) {
                 if (sourceTemplate.hostilityType() == HostilityType.FRIENDLY) {
                     event.setCanceled(true);
@@ -443,14 +406,7 @@ public final class VeyloriaServerEvents {
         if (!(event.getEntity() instanceof ServerPlayer player)) {
             return;
         }
-        if (VeyloriaServerRuntime.instance().authLockService().isLocked(player)) {
-            event.setCanceled(true);
-            return;
-        }
         if (event.getHand() != InteractionHand.MAIN_HAND) {
-            return;
-        }
-        if (!VeyloriaServerRuntime.instance().authService().sessionManager().isAuthenticated(player.getUUID())) {
             return;
         }
         RpgItemData weapon = RpgItemUtils.read(player.getMainHandItem());
@@ -471,20 +427,6 @@ public final class VeyloriaServerEvents {
         if (casted) {
             event.setCanceled(true);
             lastSkillUseTick.put(player.getUUID(), gameTime);
-        }
-    }
-
-    @SubscribeEvent
-    public void onEntityInteract(PlayerInteractEvent.EntityInteract event) {
-        if (event.getEntity() instanceof ServerPlayer player && VeyloriaServerRuntime.instance().authLockService().isLocked(player)) {
-            event.setCanceled(true);
-        }
-    }
-
-    @SubscribeEvent
-    public void onContainerOpen(PlayerContainerEvent.Open event) {
-        if (event.getEntity() instanceof ServerPlayer player && VeyloriaServerRuntime.instance().authLockService().isLocked(player)) {
-            player.closeContainer();
         }
     }
 
@@ -1261,19 +1203,6 @@ public final class VeyloriaServerEvents {
         HealingPool withNextTick(long nextTick) {
             return new HealingPool(dimension, center, radius, healPerTick, ownerUuid, expiresAtTick, nextTick, legendary);
         }
-    }
-
-    private int handleAuthResult(ServerPlayer player, AuthService.AuthResult result) {
-        if (!result.success()) {
-            ServerMarkers.sendError(player, result.message());
-            return 0;
-        }
-        AccountRecord account = result.account();
-        CharacterProfile profile = VeyloriaServerRuntime.instance().characterService().loadOrCreate(account);
-        VeyloriaServerRuntime.instance().authLockService().unlock(player);
-        syncPlayerHud(player, profile);
-        ServerMarkers.sendAuthOk(player);
-        return 1;
     }
 
     private void syncPlayerHud(ServerPlayer player, CharacterProfile profile) {
