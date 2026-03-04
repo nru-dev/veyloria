@@ -92,18 +92,11 @@ sourceSets.main.resources.srcDir generateModMetadata
 
 dependencies {
     implementation('org.xerial:sqlite-jdbc:3.49.1.0')
-    implementation('org.yaml:snakeyaml:2.4')
 
     jarJar('org.xerial:sqlite-jdbc:3.49.1.0') {
         version {
             strictly '[3.49.1.0]'
             prefer '3.49.1.0'
-        }
-    }
-    jarJar('org.yaml:snakeyaml:2.4') {
-        version {
-            strictly '[2.4]'
-            prefer '2.4'
         }
     }
 
