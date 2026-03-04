@@ -5,6 +5,7 @@ import dev.laakirun.veyloria.common.VeyloriaConstants;
 import dev.laakirun.veyloria.common.item.PlayerLoadoutData;
 import dev.laakirun.veyloria.common.menu.VeyloriaInventoryMenu;
 import dev.laakirun.veyloria.server.VeyloriaServerRuntime;
+import dev.laakirun.veyloria.server.game.VeyloriaServerEvents;
 import net.minecraft.core.HolderLookup;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.RegistryFriendlyByteBuf;
@@ -45,6 +46,12 @@ public final class VeyloriaNetwork {
             context.enqueueWork(() -> {
                 if (context.player() instanceof ServerPlayer player) {
                     VeyloriaServerRuntime.instance().playerLoadoutService().useConsumable(player, payload.consumableSlot());
+                }
+            }));
+        registrar.playToServer(MeleeAttackIntentPayload.TYPE, MeleeAttackIntentPayload.STREAM_CODEC, (payload, context) ->
+            context.enqueueWork(() -> {
+                if (context.player() instanceof ServerPlayer player) {
+                    VeyloriaServerEvents.handleMeleeIntent(player);
                 }
             }));
         registrar.playToClient(ConsumableUseStatePayload.TYPE, ConsumableUseStatePayload.STREAM_CODEC, (payload, context) ->
@@ -115,6 +122,18 @@ public final class VeyloriaNetwork {
 
         @Override
         public Type<UseConsumablePayload> type() {
+            return TYPE;
+        }
+    }
+
+    public record MeleeAttackIntentPayload() implements CustomPacketPayload {
+        public static final Type<MeleeAttackIntentPayload> TYPE =
+            new Type<>(ResourceLocation.fromNamespaceAndPath(VeyloriaConstants.MOD_ID, "melee_attack_intent"));
+        public static final StreamCodec<RegistryFriendlyByteBuf, MeleeAttackIntentPayload> STREAM_CODEC =
+            StreamCodec.unit(new MeleeAttackIntentPayload());
+
+        @Override
+        public Type<MeleeAttackIntentPayload> type() {
             return TYPE;
         }
     }

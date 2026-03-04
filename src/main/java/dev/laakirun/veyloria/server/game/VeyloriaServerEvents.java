@@ -12,6 +12,12 @@ import dev.laakirun.veyloria.common.model.HostilityType;
 import dev.laakirun.veyloria.common.model.ItemCategory;
 import dev.laakirun.veyloria.common.model.Rarity;
 import dev.laakirun.veyloria.common.config.RatesConfig;
+import dev.laakirun.veyloria.common.entity.HomingArrowEntity;
+import dev.laakirun.veyloria.common.registry.VeyloriaAttachments;
+import dev.laakirun.veyloria.common.registry.VeyloriaEntityTypes;
+import dev.laakirun.veyloria.common.targeting.PlayerTargetState;
+import dev.laakirun.veyloria.common.targeting.TargetingProfile;
+import dev.laakirun.veyloria.common.targeting.TargetingService;
 import dev.laakirun.veyloria.server.VeyloriaServerRuntime;
 import dev.laakirun.veyloria.server.content.MobSpawnGroup;
 import dev.laakirun.veyloria.server.content.MobTemplate;
@@ -20,6 +26,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -46,6 +53,7 @@ import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.entity.decoration.ArmorStand;
 import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.entity.projectile.Arrow;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.item.component.CustomData;
@@ -74,11 +82,21 @@ import org.slf4j.LoggerFactory;
 
 public final class VeyloriaServerEvents {
     private static final Logger COMBAT_LOGGER = LoggerFactory.getLogger("veyloria.combat");
-    private static final int ATTACK_COOLDOWN_TICKS = 20;
+    private static VeyloriaServerEvents INSTANCE;
+    private static final int ATTACK_COOLDOWN_TICKS = 10;
+    private static final double MELEE_TARGET_RANGE = 4.25D;
+    private static final double MELEE_TARGET_RANGE_SQR = MELEE_TARGET_RANGE * MELEE_TARGET_RANGE;
+    private static final double MELEE_TARGET_RADIUS_SQR = 0.90D * 0.90D;
+    private static final double STARTER_BOW_TARGET_RANGE = 50.0D;
+    private static final String STARTER_BOW_TEMPLATE_CODE = "test_best_bow";
     private static final long PROFILE_SYNC_INTERVAL_TICKS = 20L;
+    private static final long TARGET_MARKER_HEARTBEAT_TICKS = 15L;
     private static final double BARS_VIEW_DISTANCE_SQR = 96.0D * 96.0D;
     private static final long BARS_HEARTBEAT_TICKS = 40L;
     private static final String TAG_TEST_SWORD_GRANTED = "veyloria_test_sword_granted";
+    private static final String TAG_TEST_BOW_GRANTED = "veyloria_test_bow_granted";
+    private static final int STARTER_ARROW_STACKS = 4;
+    private static final int ARROWS_PER_STACK = 64;
     private static final long DAMAGE_TEXT_LIFETIME_TICKS = 20L;
     private static final double CRIT_BASE_CHANCE = 0.05D;
     private static final double CRIT_PER_AGILITY = 0.0035D;
@@ -91,13 +109,22 @@ public final class VeyloriaServerEvents {
     private final java.util.Map<UUID, Double> manaByPlayer = new ConcurrentHashMap<>();
     private final java.util.Map<UUID, HealingPool> activeHealingPools = new ConcurrentHashMap<>();
     private final java.util.Map<BarsPairKey, BarsCacheEntry> barCacheByViewerSubject = new ConcurrentHashMap<>();
+    private final java.util.Map<UUID, TargetMarkerCacheEntry> targetMarkerByPlayer = new ConcurrentHashMap<>();
     private final java.util.Map<UUID, DamageTextState> damageTextById = new ConcurrentHashMap<>();
 
     private long lastSpawnTick;
     private long lastProfileTick;
 
     public static void register() {
-        NeoForge.EVENT_BUS.register(new VeyloriaServerEvents());
+        INSTANCE = new VeyloriaServerEvents();
+        NeoForge.EVENT_BUS.register(INSTANCE);
+    }
+
+    public static void handleMeleeIntent(ServerPlayer player) {
+        if (INSTANCE == null || player == null || !player.isAlive()) {
+            return;
+        }
+        INSTANCE.performMeleeAttack(player, null);
     }
 
     @SubscribeEvent
@@ -109,7 +136,7 @@ public final class VeyloriaServerEvents {
                     .then(Commands.literal("show")
                         .executes(context -> {
                             RatesConfig rates = VeyloriaServerRuntime.instance().ratesConfig();
-                            context.getSource().sendSuccess(() -> Component.literal("Рейты: xp=" + rates.xpRate()
+                            context.getSource().sendSuccess(() -> Component.literal("Р РµР№С‚С‹: xp=" + rates.xpRate()
                                 + ", currency=" + rates.currencyRate()
                                 + ", resource=" + rates.resourceDropRate()
                                 + ", equipment=" + rates.equipmentDropRate()
@@ -120,7 +147,7 @@ public final class VeyloriaServerEvents {
                     .then(Commands.literal("reset")
                         .executes(context -> {
                             VeyloriaServerRuntime.instance().resetRatesOverrides();
-                            context.getSource().sendSuccess(() -> Component.literal("Рейты сброшены к значениям из конфига"), false);
+                            context.getSource().sendSuccess(() -> Component.literal("Р РµР№С‚С‹ СЃР±СЂРѕС€РµРЅС‹ Рє Р·РЅР°С‡РµРЅРёСЏРј РёР· РєРѕРЅС„РёРіР°"), false);
                             return 1;
                         }))
                     .then(Commands.literal("set")
@@ -151,6 +178,7 @@ public final class VeyloriaServerEvents {
         }
         runtime.testWorldLayoutService().ensureStarterSpawn(player);
         grantBestTestSword(player);
+        grantBestTestBow(player);
         runtime.playerLoadoutService().initializePlayer(player);
         syncPlayerHud(player, profile);
     }
@@ -167,6 +195,7 @@ public final class VeyloriaServerEvents {
         lastPlayerAttackTick.remove(player.getUUID());
         lastSkillUseTick.remove(player.getUUID());
         manaByPlayer.remove(player.getUUID());
+        targetMarkerByPlayer.remove(player.getUUID());
         invalidateBarsCache(player.getUUID());
     }
 
@@ -189,6 +218,7 @@ public final class VeyloriaServerEvents {
         manaByPlayer.clear();
         activeHealingPools.clear();
         barCacheByViewerSubject.clear();
+        targetMarkerByPlayer.clear();
         damageTextById.clear();
     }
 
@@ -211,6 +241,7 @@ public final class VeyloriaServerEvents {
         for (ServerPlayer player : event.getServer().getPlayerList().getPlayers()) {
             disableHunger(player);
             enforceBuildMode(player);
+            updateServerTargetState(player, gameTime);
             CharacterProfile profile = runtime.characterService().loadedProfile(player.getUUID());
             if (profile != null) {
                 runtime.playerLoadoutService().tick(player, profile.level());
@@ -234,6 +265,10 @@ public final class VeyloriaServerEvents {
     @SubscribeEvent
     public void onEntityJoinLevel(EntityJoinLevelEvent event) {
         if (event.getLevel().isClientSide()) {
+            return;
+        }
+        if (event.getEntity() instanceof Arrow arrow) {
+            tryReplaceArrowWithHoming(event, arrow);
             return;
         }
         if (event.getEntity() instanceof ExperienceOrb orb) {
@@ -318,16 +353,26 @@ public final class VeyloriaServerEvents {
         if (!(event.getEntity() instanceof ServerPlayer player)) {
             return;
         }
-        VeyloriaServerRuntime.instance().playerLoadoutService().initializePlayer(player);
         event.setCanceled(true);
-        if (!(event.getTarget() instanceof LivingEntity target)) {
+        performMeleeAttack(player, event.getTarget());
+    }
+
+    private void performMeleeAttack(ServerPlayer player, Entity rawTarget) {
+        if (player == null || !player.isAlive()) {
             return;
         }
-        MobTemplate template = VeyloriaServerRuntime.instance().mobSpawnService().template(target.getUUID());
-        if (template == null) {
+        VeyloriaServerRuntime runtime = VeyloriaServerRuntime.instance();
+        if (runtime.playerLoadoutService() == null || runtime.characterService() == null || runtime.mobSpawnService() == null) {
             return;
         }
+        runtime.playerLoadoutService().initializePlayer(player);
         long gameTime = player.level().getGameTime();
+        ResolvedMeleeTarget resolvedTarget = resolveMeleeTarget(player, rawTarget, gameTime);
+        if (resolvedTarget == null) {
+            return;
+        }
+        LivingEntity target = resolvedTarget.target();
+        MobTemplate template = resolvedTarget.template();
         long previousHitTick = lastPlayerAttackTick.getOrDefault(player.getUUID(), Long.MIN_VALUE / 4);
         if (gameTime - previousHitTick < ATTACK_COOLDOWN_TICKS) {
             return;
@@ -336,12 +381,12 @@ public final class VeyloriaServerEvents {
             ServerMarkers.sendError(player, "Дружелюбных существ атаковать нельзя");
             return;
         }
-        CharacterProfile profile = VeyloriaServerRuntime.instance().characterService().loadedProfile(player.getUUID());
+        CharacterProfile profile = runtime.characterService().loadedProfile(player.getUUID());
         if (profile == null) {
             return;
         }
         BaseStatsSnapshot stats = snapshotStats(player, profile);
-        RpgItemData weapon = RpgItemUtils.read(VeyloriaServerRuntime.instance().playerLoadoutService().currentWeapon(player));
+        RpgItemData weapon = RpgItemUtils.read(runtime.playerLoadoutService().currentWeapon(player));
         double baseDamage = computePlayerDamageByWeapon(profile.level(), stats, weapon);
         DamageRoll roll = rollDamage(stats, weapon, baseDamage);
         DamageSource damageSource = player.damageSources().playerAttack(player);
@@ -355,17 +400,139 @@ public final class VeyloriaServerEvents {
         if (player.level() instanceof ServerLevel level) {
             showDamageNumber(level, target, roll.damage(), roll.critical());
             double threat = roll.damage() * threatModifier(weapon);
-            VeyloriaServerRuntime.instance().mobSpawnService().recordHit(level, target.getUUID(), player.getUUID(), gameTime, threat);
+            runtime.mobSpawnService().recordHit(level, target.getUUID(), player.getUUID(), gameTime, threat);
             applyMeleeSpecials(level, player, target, weapon, damageSource, roll.damage(), gameTime);
         }
         if (template.hostilityType() == HostilityType.NEUTRAL) {
-            VeyloriaServerRuntime.instance().mobSpawnService().markNeutralAggro(target.getUUID(), player.getUUID(), gameTime);
+            runtime.mobSpawnService().markNeutralAggro(target.getUUID(), player.getUUID(), gameTime);
             if (target instanceof Mob mob) {
                 mob.setTarget(player);
             }
         }
         COMBAT_LOGGER.debug("Player {} dealt {}{} to mob {} ({})", player.getGameProfile().getName(),
             Math.round(roll.damage() * 100.0D) / 100.0D, roll.critical() ? " (crit)" : "", target.getUUID(), template.code());
+    }
+
+    private ResolvedMeleeTarget resolveMeleeTarget(ServerPlayer player, Entity rawTarget, long gameTime) {
+        VeyloriaServerRuntime runtime = VeyloriaServerRuntime.instance();
+        MobSpawnService spawnService = runtime.mobSpawnService();
+        if (spawnService == null) {
+            return null;
+        }
+
+        ResolvedMeleeTarget directTarget = toManagedMeleeTarget(player, rawTarget, spawnService);
+        if (directTarget != null) {
+            return directTarget;
+        }
+
+        TargetingService targetingService = runtime.targetingService();
+        TargetingProfile targetingProfile = resolveWeaponTargetingProfile(player, runtime.targetingProfile());
+        if (targetingService != null && targetingProfile != null && player.level() instanceof ServerLevel level) {
+            PlayerTargetState targetState = player.getData(VeyloriaAttachments.PLAYER_TARGET);
+            UUID lockedTargetUuid = targetState.currentTargetUuid();
+            if (lockedTargetUuid != null) {
+                Entity lockedEntity = level.getEntity(lockedTargetUuid);
+                if (lockedEntity instanceof LivingEntity lockedTarget
+                    && isWithinMeleeReach(player, lockedTarget)
+                    && targetingService.isLockCandidate(player, lockedTarget, targetingProfile)
+                    && (!targetingProfile.requireLosForLock()
+                    || targetingService.hasLineOfSight(player, lockedTarget, TargetingService.defaultTargetPoint(lockedTarget)))) {
+                    MobTemplate lockedTemplate = spawnService.template(lockedTarget.getUUID());
+                    if (lockedTemplate != null && (!(lockedTarget instanceof Mob lockedMob) || isAttackableByPlayers(lockedMob))) {
+                        targetState.update(lockedTarget.getUUID(), gameTime);
+                        return new ResolvedMeleeTarget(lockedTarget, lockedTemplate);
+                    }
+                }
+            }
+        }
+
+        return findRayMeleeTarget(player, spawnService);
+    }
+
+    private ResolvedMeleeTarget toManagedMeleeTarget(ServerPlayer player, Entity rawTarget, MobSpawnService spawnService) {
+        if (!(rawTarget instanceof LivingEntity livingTarget)) {
+            return null;
+        }
+        if (!isWithinMeleeReach(player, livingTarget)) {
+            return null;
+        }
+        MobTemplate template = spawnService.template(livingTarget.getUUID());
+        if (template == null) {
+            return null;
+        }
+        if (template.hostilityType() == HostilityType.FRIENDLY) {
+            return null;
+        }
+        if (livingTarget instanceof Mob mob && !isAttackableByPlayers(mob)) {
+            return null;
+        }
+        return new ResolvedMeleeTarget(livingTarget, template);
+    }
+
+    private ResolvedMeleeTarget findRayMeleeTarget(ServerPlayer player, MobSpawnService spawnService) {
+        if (!(player.level() instanceof ServerLevel level)) {
+            return null;
+        }
+        Vec3 look = player.getLookAngle();
+        if (look.lengthSqr() < 0.0001D) {
+            return null;
+        }
+        Vec3 eye = player.getEyePosition();
+        Vec3 end = eye.add(look.normalize().scale(MELEE_TARGET_RANGE));
+        AABB scan = player.getBoundingBox().expandTowards(look.scale(MELEE_TARGET_RANGE)).inflate(1.2D);
+        ResolvedMeleeTarget best = null;
+        double bestScore = Double.MAX_VALUE;
+
+        for (Mob mob : level.getEntitiesOfClass(Mob.class, scan, Mob::isAlive)) {
+            MobTemplate template = spawnService.template(mob.getUUID());
+            if (template == null || template.hostilityType() == HostilityType.FRIENDLY) {
+                continue;
+            }
+            if (!isAttackableByPlayers(mob)) {
+                continue;
+            }
+            if (!isWithinMeleeReach(player, mob)) {
+                continue;
+            }
+            double distanceSqr = player.distanceToSqr(mob);
+            if (!player.hasLineOfSight(mob)) {
+                continue;
+            }
+
+            boolean intersectsHitbox = mob.getBoundingBox().inflate(0.25D).clip(eye, end).isPresent();
+            double aimOffsetSqr = distancePointToSegmentSqr(TargetingService.defaultTargetPoint(mob), eye, end);
+            if (!intersectsHitbox && aimOffsetSqr > MELEE_TARGET_RADIUS_SQR) {
+                continue;
+            }
+
+            double score = distanceSqr + aimOffsetSqr * 2.4D;
+            if (score < bestScore) {
+                bestScore = score;
+                best = new ResolvedMeleeTarget(mob, template);
+            }
+        }
+        return best;
+    }
+
+    private static double distancePointToSegmentSqr(Vec3 point, Vec3 segmentStart, Vec3 segmentEnd) {
+        Vec3 segment = segmentEnd.subtract(segmentStart);
+        double lengthSqr = segment.lengthSqr();
+        if (lengthSqr < 0.000001D) {
+            return point.distanceToSqr(segmentStart);
+        }
+        double t = point.subtract(segmentStart).dot(segment) / lengthSqr;
+        double clampedT = Math.max(0.0D, Math.min(1.0D, t));
+        Vec3 closest = segmentStart.add(segment.scale(clampedT));
+        return point.distanceToSqr(closest);
+    }
+
+    private static boolean isWithinMeleeReach(ServerPlayer player, LivingEntity target) {
+        if (player == null || target == null) {
+            return false;
+        }
+        Vec3 eye = player.getEyePosition();
+        AABB hitbox = target.getBoundingBox().inflate(0.20D);
+        return hitbox.distanceToSqr(eye) <= MELEE_TARGET_RANGE_SQR;
     }
 
     @SubscribeEvent
@@ -403,7 +570,7 @@ public final class VeyloriaServerEvents {
             if (targetTemplate != null) {
                 if (targetTemplate.hostilityType() == HostilityType.FRIENDLY) {
                     event.setCanceled(true);
-                    ServerMarkers.sendError(playerSource, "Дружелюбных существ атаковать нельзя");
+                    ServerMarkers.sendError(playerSource, "Р”СЂСѓР¶РµР»СЋР±РЅС‹С… СЃСѓС‰РµСЃС‚РІ Р°С‚Р°РєРѕРІР°С‚СЊ РЅРµР»СЊР·СЏ");
                     return;
                 }
                 if (targetTemplate.hostilityType() == HostilityType.NEUTRAL) {
@@ -525,10 +692,10 @@ public final class VeyloriaServerEvents {
                 * VeyloriaServerRuntime.instance().ratesConfig().currencyRate());
             profile.addCurrency(copper);
             ServerMarkers.sendGain(player, xp, copper);
-            player.sendSystemMessage(Component.literal("Опыт с моба: +" + xp));
+            player.sendSystemMessage(Component.literal("РћРїС‹С‚ СЃ РјРѕР±Р°: +" + xp));
             syncPlayerHud(player, profile);
             if (gainResult.leveledUp()) {
-                player.sendSystemMessage(Component.literal("Новый уровень: " + gainResult.previousLevel() + " -> " + gainResult.newLevel()));
+                player.sendSystemMessage(Component.literal("РќРѕРІС‹Р№ СѓСЂРѕРІРµРЅСЊ: " + gainResult.previousLevel() + " -> " + gainResult.newLevel()));
             }
             VeyloriaServerRuntime.instance().characterService().save(profile);
             COMBAT_LOGGER.debug("Rewards for {} from mob {}: +{} xp, +{} copper", player.getGameProfile().getName(),
@@ -549,17 +716,16 @@ public final class VeyloriaServerEvents {
         if (weapon == null || weapon.weaponType().isBlank()) {
             return;
         }
+        if (!"wand".equals(weapon.weaponType())) {
+            return;
+        }
         long gameTime = player.level().getGameTime();
         long lastUse = lastSkillUseTick.getOrDefault(player.getUUID(), Long.MIN_VALUE / 4);
         if (gameTime - lastUse < 12) {
             event.setCanceled(true);
             return;
         }
-        boolean casted = switch (weapon.weaponType()) {
-            case "bow" -> castBowSkill(player, weapon, gameTime);
-            case "wand" -> castWandSkill(player, weapon, gameTime);
-            default -> false;
-        };
+        boolean casted = castWandSkill(player, weapon, gameTime);
         if (casted) {
             event.setCanceled(true);
             lastSkillUseTick.put(player.getUUID(), gameTime);
@@ -589,6 +755,110 @@ public final class VeyloriaServerEvents {
         VeyloriaServerRuntime.instance().playerLoadoutService().finishConsumableUse(player, event.getResultStack());
     }
 
+    private void updateServerTargetState(ServerPlayer player, long gameTime) {
+        VeyloriaServerRuntime runtime = VeyloriaServerRuntime.instance();
+        TargetingService targetingService = runtime.targetingService();
+        MobSpawnService spawnService = runtime.mobSpawnService();
+        TargetingProfile profile = runtime.targetingProfile();
+        if (targetingService == null || spawnService == null || profile == null) {
+            PlayerTargetState targetState = player.getData(VeyloriaAttachments.PLAYER_TARGET);
+            targetState.clear(gameTime);
+            syncTargetMarker(player, null, gameTime);
+            return;
+        }
+        TargetingProfile effectiveProfile = resolveWeaponTargetingProfile(player, profile);
+        PlayerTargetState targetState = player.getData(VeyloriaAttachments.PLAYER_TARGET);
+        TargetingProfile attackableProfile = new TargetingProfile(
+            effectiveProfile.fovDegrees(),
+            effectiveProfile.rangeBlocks(),
+            effectiveProfile.requireLosForLock(),
+            effectiveProfile.memoryTicks(),
+            effectiveProfile.turnRate(),
+            effectiveProfile.targetOnlyHit(),
+            candidate -> isServerAttackableTarget(candidate, spawnService, gameTime),
+            effectiveProfile.stickyTicks()
+        );
+        LivingEntity target = targetingService.findBestTarget(player, attackableProfile, targetState, gameTime);
+        if (target == null) {
+            targetState.clear(gameTime);
+            syncTargetMarker(player, null, gameTime);
+            return;
+        }
+        targetState.update(target.getUUID(), gameTime);
+        syncTargetMarker(player, target.getUUID(), gameTime);
+    }
+
+    private boolean isServerAttackableTarget(LivingEntity candidate, MobSpawnService spawnService, long gameTime) {
+        if (!(candidate instanceof Mob mob)) {
+            return false;
+        }
+        MobTemplate template = spawnService.template(mob.getUUID());
+        if (template == null || template.hostilityType() == HostilityType.FRIENDLY) {
+            return false;
+        }
+        return !spawnService.isEvading(mob.getUUID(), gameTime);
+    }
+
+    private void syncTargetMarker(ServerPlayer player, UUID targetUuid, long gameTime) {
+        UUID playerUuid = player.getUUID();
+        TargetMarkerCacheEntry cached = targetMarkerByPlayer.get(playerUuid);
+        if (cached != null
+            && Objects.equals(cached.targetUuid(), targetUuid)
+            && gameTime - cached.lastSentTick() < TARGET_MARKER_HEARTBEAT_TICKS) {
+            return;
+        }
+        ServerMarkers.sendTarget(player, targetUuid);
+        targetMarkerByPlayer.put(playerUuid, new TargetMarkerCacheEntry(targetUuid, gameTime));
+    }
+
+    private void tryReplaceArrowWithHoming(EntityJoinLevelEvent event, Arrow arrow) {
+        if (arrow instanceof HomingArrowEntity || !(event.getLevel() instanceof ServerLevel level)) {
+            return;
+        }
+        if (!(arrow.getOwner() instanceof ServerPlayer shooter)) {
+            return;
+        }
+
+        VeyloriaServerRuntime runtime = VeyloriaServerRuntime.instance();
+        if (runtime.playerLoadoutService() == null || runtime.targetingService() == null || runtime.targetingProfile() == null) {
+            return;
+        }
+
+        RpgItemData weapon = RpgItemUtils.read(runtime.playerLoadoutService().currentWeapon(shooter));
+        if (weapon == null || !"bow".equals(weapon.weaponType())) {
+            return;
+        }
+
+        PlayerTargetState targetState = shooter.getData(VeyloriaAttachments.PLAYER_TARGET);
+        UUID targetUuid = targetState.currentTargetUuid();
+        if (targetUuid == null) {
+            return;
+        }
+        Entity rawTarget = level.getEntity(targetUuid);
+        if (!(rawTarget instanceof LivingEntity target)) {
+            return;
+        }
+        TargetingProfile effectiveProfile = resolveWeaponTargetingProfile(shooter, runtime.targetingProfile());
+        if (!runtime.targetingService().isLockCandidate(shooter, target, effectiveProfile)) {
+            return;
+        }
+
+        HomingArrowEntity homingArrow = new HomingArrowEntity(VeyloriaEntityTypes.HOMING_ARROW.get(), level);
+        CompoundTag snapshot = arrow.saveWithoutId(new CompoundTag());
+        homingArrow.load(snapshot);
+        homingArrow.setPos(arrow.getX(), arrow.getY(), arrow.getZ());
+        homingArrow.setDeltaMovement(arrow.getDeltaMovement());
+        homingArrow.setYRot(arrow.getYRot());
+        homingArrow.setXRot(arrow.getXRot());
+        homingArrow.setOwner(shooter);
+        homingArrow.setTarget(target);
+
+        if (level.addFreshEntity(homingArrow)) {
+            event.setCanceled(true);
+            arrow.discard();
+        }
+    }
+
     private int applyRateOverride(CommandSourceStack source, String rateTypeRaw, double value) {
         String rateType = rateTypeRaw.toLowerCase(Locale.ROOT);
         RatesConfig current = VeyloriaServerRuntime.instance().ratesConfig();
@@ -608,11 +878,11 @@ public final class VeyloriaServerEvents {
             default -> null;
         };
         if (updated == null) {
-            source.sendFailure(Component.literal("Неизвестный тип рейта. Используйте: xp|currency|resource|equipment|consumable|boss_respawn"));
+            source.sendFailure(Component.literal("РќРµРёР·РІРµСЃС‚РЅС‹Р№ С‚РёРї СЂРµР№С‚Р°. РСЃРїРѕР»СЊР·СѓР№С‚Рµ: xp|currency|resource|equipment|consumable|boss_respawn"));
             return 0;
         }
         VeyloriaServerRuntime.instance().overrideRates(updated);
-        source.sendSuccess(() -> Component.literal("Рейт " + rateType + " установлен в " + value + " (только до рестарта)"), false);
+        source.sendSuccess(() -> Component.literal("Р РµР№С‚ " + rateType + " СѓСЃС‚Р°РЅРѕРІР»РµРЅ РІ " + value + " (С‚РѕР»СЊРєРѕ РґРѕ СЂРµСЃС‚Р°СЂС‚Р°)"), false);
         return 1;
     }
 
@@ -644,12 +914,12 @@ public final class VeyloriaServerEvents {
     }
 
     private int partyHelp(ServerPlayer player) {
-        player.sendSystemMessage(Component.literal("Команды группы:"));
-        player.sendSystemMessage(Component.literal("/party <nickname> или /p <nickname> — добавить игрока в группу"));
-        player.sendSystemMessage(Component.literal("/party add <nickname> или /p add <nickname> — добавить игрока (только лидер)"));
-        player.sendSystemMessage(Component.literal("/party kick <nickname> или /p kick <nickname> — исключить игрока (только лидер)"));
-        player.sendSystemMessage(Component.literal("/party leave или /p leave — выйти из группы"));
-        player.sendSystemMessage(Component.literal("/party help или /p help — показать эту справку"));
+        player.sendSystemMessage(Component.literal("РљРѕРјР°РЅРґС‹ РіСЂСѓРїРїС‹:"));
+        player.sendSystemMessage(Component.literal("/party <nickname> РёР»Рё /p <nickname> вЂ” РґРѕР±Р°РІРёС‚СЊ РёРіСЂРѕРєР° РІ РіСЂСѓРїРїСѓ"));
+        player.sendSystemMessage(Component.literal("/party add <nickname> РёР»Рё /p add <nickname> вЂ” РґРѕР±Р°РІРёС‚СЊ РёРіСЂРѕРєР° (С‚РѕР»СЊРєРѕ Р»РёРґРµСЂ)"));
+        player.sendSystemMessage(Component.literal("/party kick <nickname> РёР»Рё /p kick <nickname> вЂ” РёСЃРєР»СЋС‡РёС‚СЊ РёРіСЂРѕРєР° (С‚РѕР»СЊРєРѕ Р»РёРґРµСЂ)"));
+        player.sendSystemMessage(Component.literal("/party leave РёР»Рё /p leave вЂ” РІС‹Р№С‚Рё РёР· РіСЂСѓРїРїС‹"));
+        player.sendSystemMessage(Component.literal("/party help РёР»Рё /p help вЂ” РїРѕРєР°Р·Р°С‚СЊ СЌС‚Сѓ СЃРїСЂР°РІРєСѓ"));
         return 1;
     }
 
@@ -659,41 +929,41 @@ public final class VeyloriaServerEvents {
         }
         if (requireExistingParty && !VeyloriaServerRuntime.instance().partyService().isLeader(requester.getUUID())) {
             if (VeyloriaServerRuntime.instance().partyService().leaderOf(requester.getUUID()) == null) {
-                requester.sendSystemMessage(Component.literal("Вы не состоите в группе. Сначала создайте группу через /party <nickname>"));
+                requester.sendSystemMessage(Component.literal("Р’С‹ РЅРµ СЃРѕСЃС‚РѕРёС‚Рµ РІ РіСЂСѓРїРїРµ. РЎРЅР°С‡Р°Р»Р° СЃРѕР·РґР°Р№С‚Рµ РіСЂСѓРїРїСѓ С‡РµСЂРµР· /party <nickname>"));
             } else {
-                requester.sendSystemMessage(Component.literal("Только лидер группы может добавлять игроков"));
+                requester.sendSystemMessage(Component.literal("РўРѕР»СЊРєРѕ Р»РёРґРµСЂ РіСЂСѓРїРїС‹ РјРѕР¶РµС‚ РґРѕР±Р°РІР»СЏС‚СЊ РёРіСЂРѕРєРѕРІ"));
             }
             return 0;
         }
         ServerPlayer target = requester.getServer().getPlayerList().getPlayerByName(nickname);
         if (target == null) {
-            requester.sendSystemMessage(Component.literal("Игрок не найден в онлайне"));
+            requester.sendSystemMessage(Component.literal("РРіСЂРѕРє РЅРµ РЅР°Р№РґРµРЅ РІ РѕРЅР»Р°Р№РЅРµ"));
             return 0;
         }
         if (!isAuthenticated(target)) {
-            requester.sendSystemMessage(Component.literal("Игрок не авторизован"));
+            requester.sendSystemMessage(Component.literal("РРіСЂРѕРє РЅРµ Р°РІС‚РѕСЂРёР·РѕРІР°РЅ"));
             return 0;
         }
         PartyService.PartyUpdateResult result = VeyloriaServerRuntime.instance().partyService().addMember(requester.getUUID(), target.getUUID());
         switch (result.status()) {
             case CREATED -> {
-                requester.sendSystemMessage(Component.literal("Создана группа. Вы лидер. Участников: " + result.memberCount()));
-                target.sendSystemMessage(Component.literal("Вы вступили в группу. Лидер: " + requester.getGameProfile().getName()));
+                requester.sendSystemMessage(Component.literal("РЎРѕР·РґР°РЅР° РіСЂСѓРїРїР°. Р’С‹ Р»РёРґРµСЂ. РЈС‡Р°СЃС‚РЅРёРєРѕРІ: " + result.memberCount()));
+                target.sendSystemMessage(Component.literal("Р’С‹ РІСЃС‚СѓРїРёР»Рё РІ РіСЂСѓРїРїСѓ. Р›РёРґРµСЂ: " + requester.getGameProfile().getName()));
                 return 1;
             }
             case ADDED -> {
-                requester.sendSystemMessage(Component.literal("Игрок " + target.getGameProfile().getName()
-                    + " добавлен в группу. Участников: " + result.memberCount() + "/" + PartyService.MAX_MEMBERS));
-                target.sendSystemMessage(Component.literal("Вы добавлены в группу игроком " + requester.getGameProfile().getName()));
+                requester.sendSystemMessage(Component.literal("РРіСЂРѕРє " + target.getGameProfile().getName()
+                    + " РґРѕР±Р°РІР»РµРЅ РІ РіСЂСѓРїРїСѓ. РЈС‡Р°СЃС‚РЅРёРєРѕРІ: " + result.memberCount() + "/" + PartyService.MAX_MEMBERS));
+                target.sendSystemMessage(Component.literal("Р’С‹ РґРѕР±Р°РІР»РµРЅС‹ РІ РіСЂСѓРїРїСѓ РёРіСЂРѕРєРѕРј " + requester.getGameProfile().getName()));
                 return 1;
             }
-            case NOT_IN_PARTY -> requester.sendSystemMessage(Component.literal("Сначала создайте группу через /party <nickname>"));
-            case NOT_LEADER -> requester.sendSystemMessage(Component.literal("Только лидер группы может добавлять игроков"));
-            case PARTY_FULL -> requester.sendSystemMessage(Component.literal("В группе уже максимум " + PartyService.MAX_MEMBERS + " игроков"));
-            case TARGET_IN_OTHER_PARTY -> requester.sendSystemMessage(Component.literal("Игрок уже состоит в другой группе"));
-            case TARGET_ALREADY_IN_PARTY -> requester.sendSystemMessage(Component.literal("Игрок уже в вашей группе"));
-            case SELF_TARGET -> requester.sendSystemMessage(Component.literal("Нельзя добавить самого себя"));
-            default -> requester.sendSystemMessage(Component.literal("Не удалось добавить игрока в группу"));
+            case NOT_IN_PARTY -> requester.sendSystemMessage(Component.literal("РЎРЅР°С‡Р°Р»Р° СЃРѕР·РґР°Р№С‚Рµ РіСЂСѓРїРїСѓ С‡РµСЂРµР· /party <nickname>"));
+            case NOT_LEADER -> requester.sendSystemMessage(Component.literal("РўРѕР»СЊРєРѕ Р»РёРґРµСЂ РіСЂСѓРїРїС‹ РјРѕР¶РµС‚ РґРѕР±Р°РІР»СЏС‚СЊ РёРіСЂРѕРєРѕРІ"));
+            case PARTY_FULL -> requester.sendSystemMessage(Component.literal("Р’ РіСЂСѓРїРїРµ СѓР¶Рµ РјР°РєСЃРёРјСѓРј " + PartyService.MAX_MEMBERS + " РёРіСЂРѕРєРѕРІ"));
+            case TARGET_IN_OTHER_PARTY -> requester.sendSystemMessage(Component.literal("РРіСЂРѕРє СѓР¶Рµ СЃРѕСЃС‚РѕРёС‚ РІ РґСЂСѓРіРѕР№ РіСЂСѓРїРїРµ"));
+            case TARGET_ALREADY_IN_PARTY -> requester.sendSystemMessage(Component.literal("РРіСЂРѕРє СѓР¶Рµ РІ РІР°С€РµР№ РіСЂСѓРїРїРµ"));
+            case SELF_TARGET -> requester.sendSystemMessage(Component.literal("РќРµР»СЊР·СЏ РґРѕР±Р°РІРёС‚СЊ СЃР°РјРѕРіРѕ СЃРµР±СЏ"));
+            default -> requester.sendSystemMessage(Component.literal("РќРµ СѓРґР°Р»РѕСЃСЊ РґРѕР±Р°РІРёС‚СЊ РёРіСЂРѕРєР° РІ РіСЂСѓРїРїСѓ"));
         }
         return 0;
     }
@@ -707,13 +977,13 @@ public final class VeyloriaServerEvents {
         UUID leaderBeforeLeave = VeyloriaServerRuntime.instance().partyService().leaderOf(requesterUuid);
         PartyService.PartyUpdateResult result = VeyloriaServerRuntime.instance().partyService().leave(requesterUuid);
         if (result.status() == PartyService.Status.NOT_IN_PARTY) {
-            requester.sendSystemMessage(Component.literal("Вы не состоите в группе"));
+            requester.sendSystemMessage(Component.literal("Р’С‹ РЅРµ СЃРѕСЃС‚РѕРёС‚Рµ РІ РіСЂСѓРїРїРµ"));
             return 0;
         }
 
         requester.sendSystemMessage(Component.literal(result.partyId() == null
-            ? "Вы вышли из группы"
-            : "Вы вышли из группы. Осталось участников: " + result.memberCount()));
+            ? "Р’С‹ РІС‹С€Р»Рё РёР· РіСЂСѓРїРїС‹"
+            : "Р’С‹ РІС‹С€Р»Рё РёР· РіСЂСѓРїРїС‹. РћСЃС‚Р°Р»РѕСЃСЊ СѓС‡Р°СЃС‚РЅРёРєРѕРІ: " + result.memberCount()));
 
         for (UUID memberUuid : membersBeforeLeave) {
             if (memberUuid.equals(requesterUuid)) {
@@ -721,14 +991,14 @@ public final class VeyloriaServerEvents {
             }
             ServerPlayer member = requester.getServer().getPlayerList().getPlayer(memberUuid);
             if (member != null) {
-                member.sendSystemMessage(Component.literal(requester.getGameProfile().getName() + " вышел из группы"));
+                member.sendSystemMessage(Component.literal(requester.getGameProfile().getName() + " РІС‹С€РµР» РёР· РіСЂСѓРїРїС‹"));
             }
         }
         if (leaderBeforeLeave != null && leaderBeforeLeave.equals(requesterUuid)
             && result.partyId() != null && result.leaderUuid() != null) {
             ServerPlayer newLeader = requester.getServer().getPlayerList().getPlayer(result.leaderUuid());
             if (newLeader != null) {
-                newLeader.sendSystemMessage(Component.literal("Вы назначены лидером группы"));
+                newLeader.sendSystemMessage(Component.literal("Р’С‹ РЅР°Р·РЅР°С‡РµРЅС‹ Р»РёРґРµСЂРѕРј РіСЂСѓРїРїС‹"));
             }
         }
         return 1;
@@ -740,22 +1010,22 @@ public final class VeyloriaServerEvents {
         }
         ServerPlayer target = requester.getServer().getPlayerList().getPlayerByName(nickname);
         if (target == null) {
-            requester.sendSystemMessage(Component.literal("Игрок не найден в онлайне"));
+            requester.sendSystemMessage(Component.literal("РРіСЂРѕРє РЅРµ РЅР°Р№РґРµРЅ РІ РѕРЅР»Р°Р№РЅРµ"));
             return 0;
         }
         PartyService.PartyUpdateResult result = VeyloriaServerRuntime.instance().partyService().kick(requester.getUUID(), target.getUUID());
         switch (result.status()) {
             case KICKED -> {
-                requester.sendSystemMessage(Component.literal("Игрок " + target.getGameProfile().getName()
-                    + " исключён из группы. Участников: " + result.memberCount() + "/" + PartyService.MAX_MEMBERS));
-                target.sendSystemMessage(Component.literal("Вы исключены из группы игроком " + requester.getGameProfile().getName()));
+                requester.sendSystemMessage(Component.literal("РРіСЂРѕРє " + target.getGameProfile().getName()
+                    + " РёСЃРєР»СЋС‡С‘РЅ РёР· РіСЂСѓРїРїС‹. РЈС‡Р°СЃС‚РЅРёРєРѕРІ: " + result.memberCount() + "/" + PartyService.MAX_MEMBERS));
+                target.sendSystemMessage(Component.literal("Р’С‹ РёСЃРєР»СЋС‡РµРЅС‹ РёР· РіСЂСѓРїРїС‹ РёРіСЂРѕРєРѕРј " + requester.getGameProfile().getName()));
                 return 1;
             }
-            case NOT_IN_PARTY -> requester.sendSystemMessage(Component.literal("Вы не состоите в группе"));
-            case NOT_LEADER -> requester.sendSystemMessage(Component.literal("Только лидер группы может исключать игроков"));
-            case TARGET_NOT_IN_PARTY -> requester.sendSystemMessage(Component.literal("Игрок не состоит в вашей группе"));
-            case CANNOT_KICK_SELF -> requester.sendSystemMessage(Component.literal("Для выхода из группы используйте /party leave"));
-            default -> requester.sendSystemMessage(Component.literal("Не удалось исключить игрока из группы"));
+            case NOT_IN_PARTY -> requester.sendSystemMessage(Component.literal("Р’С‹ РЅРµ СЃРѕСЃС‚РѕРёС‚Рµ РІ РіСЂСѓРїРїРµ"));
+            case NOT_LEADER -> requester.sendSystemMessage(Component.literal("РўРѕР»СЊРєРѕ Р»РёРґРµСЂ РіСЂСѓРїРїС‹ РјРѕР¶РµС‚ РёСЃРєР»СЋС‡Р°С‚СЊ РёРіСЂРѕРєРѕРІ"));
+            case TARGET_NOT_IN_PARTY -> requester.sendSystemMessage(Component.literal("РРіСЂРѕРє РЅРµ СЃРѕСЃС‚РѕРёС‚ РІ РІР°С€РµР№ РіСЂСѓРїРїРµ"));
+            case CANNOT_KICK_SELF -> requester.sendSystemMessage(Component.literal("Р”Р»СЏ РІС‹С…РѕРґР° РёР· РіСЂСѓРїРїС‹ РёСЃРїРѕР»СЊР·СѓР№С‚Рµ /party leave"));
+            default -> requester.sendSystemMessage(Component.literal("РќРµ СѓРґР°Р»РѕСЃСЊ РёСЃРєР»СЋС‡РёС‚СЊ РёРіСЂРѕРєР° РёР· РіСЂСѓРїРїС‹"));
         }
         return 0;
     }
@@ -1087,7 +1357,7 @@ public final class VeyloriaServerEvents {
         marker.setNoBasePlate(true);
         marker.setCustomNameVisible(true);
         int roundedDamage = Math.max(1, (int) Math.round(damage));
-        String text = critical ? "✦ " + roundedDamage : Integer.toString(roundedDamage);
+        String text = critical ? "вњ¦ " + roundedDamage : Integer.toString(roundedDamage);
         marker.setCustomName(Component.literal(text).withStyle(critical ? ChatFormatting.GOLD : ChatFormatting.WHITE));
         if (!level.addFreshEntity(marker)) {
             return;
@@ -1146,6 +1416,61 @@ public final class VeyloriaServerEvents {
         player.getPersistentData().putBoolean(TAG_TEST_SWORD_GRANTED, true);
     }
 
+    private void grantBestTestBow(ServerPlayer player) {
+        if (player.getPersistentData().getBoolean(TAG_TEST_BOW_GRANTED)) {
+            return;
+        }
+        ItemStack bow = createBestTestBow();
+        if (!player.getInventory().add(bow)) {
+            player.drop(bow, false);
+        }
+        for (int index = 0; index < STARTER_ARROW_STACKS; index++) {
+            ItemStack arrows = new ItemStack(Items.ARROW, ARROWS_PER_STACK);
+            if (!player.getInventory().add(arrows)) {
+                player.drop(arrows, false);
+            }
+        }
+        player.getPersistentData().putBoolean(TAG_TEST_BOW_GRANTED, true);
+    }
+
+    private TargetingProfile resolveWeaponTargetingProfile(ServerPlayer player, TargetingProfile baseProfile) {
+        if (baseProfile == null) {
+            return null;
+        }
+        double range = resolveWeaponTargetRange(player, baseProfile.clampedRangeBlocks());
+        return new TargetingProfile(
+            baseProfile.fovDegrees(),
+            range,
+            baseProfile.requireLosForLock(),
+            baseProfile.memoryTicks(),
+            baseProfile.turnRate(),
+            baseProfile.targetOnlyHit(),
+            baseProfile.targetFilter(),
+            baseProfile.stickyTicks()
+        );
+    }
+
+    private double resolveWeaponTargetRange(ServerPlayer player, double fallbackRange) {
+        if (player == null) {
+            return fallbackRange;
+        }
+        PlayerLoadoutService loadoutService = VeyloriaServerRuntime.instance().playerLoadoutService();
+        if (loadoutService == null) {
+            return fallbackRange;
+        }
+        RpgItemData weapon = RpgItemUtils.read(loadoutService.currentWeapon(player));
+        if (weapon == null || weapon.weaponType().isBlank()) {
+            return fallbackRange;
+        }
+        return switch (weapon.weaponType()) {
+            case "sword_2h", "axe" -> MELEE_TARGET_RANGE;
+            case "bow" -> STARTER_BOW_TEMPLATE_CODE.equalsIgnoreCase(weapon.templateCode())
+                ? STARTER_BOW_TARGET_RANGE
+                : fallbackRange;
+            default -> fallbackRange;
+        };
+    }
+
     private ItemStack createBestTestSword() {
         ItemStack stack = new ItemStack(Items.NETHERITE_SWORD);
         BaseStats stats = new BaseStats(230, 165, 60, 90, 0);
@@ -1167,7 +1492,37 @@ public final class VeyloriaServerEvents {
             true,
             false,
             80,
-            "Клинок Северного Завета"
+            "РљР»РёРЅРѕРє РЎРµРІРµСЂРЅРѕРіРѕ Р—Р°РІРµС‚Р°"
+        );
+        CompoundTag root = new CompoundTag();
+        root.put(RpgItemData.ROOT_KEY, data.toTag());
+        CustomData.set(DataComponents.CUSTOM_DATA, stack, root);
+        stack.set(DataComponents.CUSTOM_NAME, Component.literal(data.fantasyName()).withStyle(ChatFormatting.GOLD));
+        return stack;
+    }
+
+    private ItemStack createBestTestBow() {
+        ItemStack stack = new ItemStack(Items.BOW);
+        BaseStats stats = new BaseStats(180, 120, 40, 260, 20);
+        RpgItemData data = new RpgItemData(
+            "test_best_bow",
+            ItemCategory.EQUIPMENT,
+            Rarity.LEGENDARY,
+            1,
+            EquipSlot.WEAPON,
+            stats,
+            "bow",
+            true,
+            0.40D,
+            4,
+            1.00D,
+            0,
+            0,
+            false,
+            true,
+            false,
+            80,
+            "Skypiercer Prototype"
         );
         CompoundTag root = new CompoundTag();
         root.put(RpgItemData.ROOT_KEY, data.toTag());
@@ -1336,7 +1691,7 @@ public final class VeyloriaServerEvents {
         double maxMana = maxMana(profile.level(), stats);
         double current = manaByPlayer.getOrDefault(player.getUUID(), maxMana);
         if (current < manaCost) {
-            ServerMarkers.sendError(player, "Недостаточно маны");
+            ServerMarkers.sendError(player, "РќРµРґРѕСЃС‚Р°С‚РѕС‡РЅРѕ РјР°РЅС‹");
             return false;
         }
         manaByPlayer.put(player.getUUID(), Math.max(0.0D, current - manaCost));
@@ -1478,6 +1833,12 @@ public final class VeyloriaServerEvents {
     }
 
     private record BarsCacheEntry(BarsPayload payload, long lastSentTick) {
+    }
+
+    private record TargetMarkerCacheEntry(UUID targetUuid, long lastSentTick) {
+    }
+
+    private record ResolvedMeleeTarget(LivingEntity target, MobTemplate template) {
     }
 
     private record DamageTextState(String dimension, long expiresAtTick, Vec3 velocity) {

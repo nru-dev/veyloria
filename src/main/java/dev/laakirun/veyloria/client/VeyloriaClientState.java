@@ -27,6 +27,8 @@ public final class VeyloriaClientState {
     private int activeLoadoutSlot = PlayerLoadoutData.SLOT_MAIN_WEAPON;
     private int autoConsumableSlot = -1;
     private long autoConsumableDeadlineTick;
+    private UUID currentTargetUuid;
+    private long currentTargetExpiresAtTick;
     private String lastError = "";
     private final List<Notification> notifications = new ArrayList<>();
     private final List<Notification> notificationsView = Collections.unmodifiableList(notifications);
@@ -54,6 +56,8 @@ public final class VeyloriaClientState {
         totalStats = BaseStats.ZERO;
         autoConsumableSlot = -1;
         autoConsumableDeadlineTick = 0L;
+        currentTargetUuid = null;
+        currentTargetExpiresAtTick = 0L;
         lastError = "";
         notifications.clear();
         barsByPlayer.clear();
@@ -156,6 +160,15 @@ public final class VeyloriaClientState {
             && autoConsumableSlot <= PlayerLoadoutData.SLOT_CONSUMABLE_4;
     }
 
+    public UUID currentTargetUuid() {
+        return currentTargetUuid;
+    }
+
+    public void setCurrentTarget(UUID targetUuid, long expiresAtTick) {
+        currentTargetUuid = targetUuid;
+        currentTargetExpiresAtTick = Math.max(0L, expiresAtTick);
+    }
+
     public void startAutoConsumableUse(int slot, long deadlineTick) {
         if (!PlayerLoadoutData.isConsumableSlot(slot)) {
             stopAutoConsumableUse();
@@ -231,6 +244,10 @@ public final class VeyloriaClientState {
         barsByPlayer.entrySet().removeIf(entry -> entry.getValue().expiresAtTick() <= gameTick);
         if (isAutoUsingConsumable() && autoConsumableDeadlineTick > 0L && autoConsumableDeadlineTick <= gameTick) {
             stopAutoConsumableUse();
+        }
+        if (currentTargetUuid != null && currentTargetExpiresAtTick > 0L && currentTargetExpiresAtTick <= gameTick) {
+            currentTargetUuid = null;
+            currentTargetExpiresAtTick = 0L;
         }
     }
 

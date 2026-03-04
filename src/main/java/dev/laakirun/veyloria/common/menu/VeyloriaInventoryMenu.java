@@ -101,7 +101,14 @@ public final class VeyloriaInventoryMenu extends AbstractContainerMenu {
             }
         } else {
             int loadoutSlot = preferredLoadoutSlot(sourceStack);
-            if (loadoutSlot < 0 || !moveItemStackTo(sourceStack, loadoutSlot, loadoutSlot + 1, false)) {
+            if (loadoutSlot < 0) {
+                return ItemStack.EMPTY;
+            }
+            if (PlayerLoadoutData.isAmmoSlot(loadoutSlot)) {
+                if (!moveAmmoToLoadout(sourceStack)) {
+                    return ItemStack.EMPTY;
+                }
+            } else if (!moveItemStackTo(sourceStack, loadoutSlot, loadoutSlot + 1, false)) {
                 return ItemStack.EMPTY;
             }
         }
@@ -162,7 +169,7 @@ public final class VeyloriaInventoryMenu extends AbstractContainerMenu {
 
     private int preferredAmmoSlot(ItemStack stack) {
         ItemStack stored = loadoutContainer.getItem(PlayerLoadoutData.SLOT_AMMO);
-        if (hasStackRoom(stored, stack) || stored.isEmpty()) {
+        if (hasStackRoom(PlayerLoadoutData.SLOT_AMMO, stored, stack) || stored.isEmpty()) {
             return PlayerLoadoutData.SLOT_AMMO;
         }
         return -1;
@@ -171,7 +178,7 @@ public final class VeyloriaInventoryMenu extends AbstractContainerMenu {
     private int preferredConsumableSlot(ItemStack stack) {
         for (int slot = PlayerLoadoutData.SLOT_CONSUMABLE_1; slot <= PlayerLoadoutData.SLOT_CONSUMABLE_4; slot++) {
             ItemStack stored = loadoutContainer.getItem(slot);
-            if (hasStackRoom(stored, stack)) {
+            if (hasStackRoom(slot, stored, stack)) {
                 return slot;
             }
         }
@@ -217,14 +224,48 @@ public final class VeyloriaInventoryMenu extends AbstractContainerMenu {
         return useAnimation == UseAnim.EAT || useAnimation == UseAnim.DRINK;
     }
 
-    private static boolean hasStackRoom(ItemStack stored, ItemStack incoming) {
+    private boolean moveAmmoToLoadout(ItemStack sourceStack) {
+        if (sourceStack.isEmpty()) {
+            return false;
+        }
+        int ammoSlot = PlayerLoadoutData.SLOT_AMMO;
+        ItemStack stored = loadoutContainer.getItem(ammoSlot);
+        if (stored.isEmpty()) {
+            int moved = Math.min(PlayerLoadoutData.AMMO_SLOT_MAX_STACK, sourceStack.getCount());
+            if (moved <= 0) {
+                return false;
+            }
+            ItemStack placed = sourceStack.copy();
+            placed.setCount(moved);
+            loadoutContainer.setItem(ammoSlot, placed);
+            sourceStack.shrink(moved);
+            return true;
+        }
+        if (!ItemStack.isSameItemSameComponents(stored, sourceStack)) {
+            return false;
+        }
+        int free = PlayerLoadoutData.AMMO_SLOT_MAX_STACK - stored.getCount();
+        if (free <= 0) {
+            return false;
+        }
+        int moved = Math.min(free, sourceStack.getCount());
+        stored.grow(moved);
+        loadoutContainer.setItem(ammoSlot, stored);
+        sourceStack.shrink(moved);
+        return moved > 0;
+    }
+
+    private static boolean hasStackRoom(int loadoutSlot, ItemStack stored, ItemStack incoming) {
         if (stored.isEmpty() || incoming.isEmpty() || !stored.isStackable()) {
             return false;
         }
         if (!ItemStack.isSameItemSameComponents(stored, incoming)) {
             return false;
         }
-        return stored.getCount() < Math.min(stored.getMaxStackSize(), incoming.getMaxStackSize());
+        int maxCount = PlayerLoadoutData.isAmmoSlot(loadoutSlot)
+            ? PlayerLoadoutData.AMMO_SLOT_MAX_STACK
+            : Math.min(stored.getMaxStackSize(), incoming.getMaxStackSize());
+        return stored.getCount() < maxCount;
     }
 
     private static final class LoadoutSlot extends Slot {
@@ -242,12 +283,16 @@ public final class VeyloriaInventoryMenu extends AbstractContainerMenu {
 
         @Override
         public int getMaxStackSize() {
-            return PlayerLoadoutData.isStackableLoadoutSlot(loadoutSlot) ? super.getMaxStackSize() : 1;
+            return PlayerLoadoutData.isStackableLoadoutSlot(loadoutSlot)
+                ? PlayerLoadoutData.maxStackForLoadoutSlot(loadoutSlot)
+                : 1;
         }
 
         @Override
         public int getMaxStackSize(ItemStack stack) {
-            return PlayerLoadoutData.isStackableLoadoutSlot(loadoutSlot) ? super.getMaxStackSize(stack) : 1;
+            return PlayerLoadoutData.isStackableLoadoutSlot(loadoutSlot)
+                ? PlayerLoadoutData.maxStackForLoadoutSlot(loadoutSlot)
+                : 1;
         }
     }
 

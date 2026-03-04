@@ -1,6 +1,8 @@
 package dev.laakirun.veyloria.client;
 
 import com.mojang.blaze3d.platform.InputConstants;
+import com.mojang.blaze3d.vertex.PoseStack;
+import com.mojang.blaze3d.vertex.VertexConsumer;
 import dev.laakirun.veyloria.common.VeyloriaConstants;
 import dev.laakirun.veyloria.common.item.PlayerLoadoutData;
 import dev.laakirun.veyloria.common.item.RpgItemData;
@@ -12,14 +14,20 @@ import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.screens.inventory.InventoryScreen;
+import net.minecraft.client.renderer.LevelRenderer;
+import net.minecraft.client.renderer.MultiBufferSource;
+import net.minecraft.client.renderer.RenderType;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
+import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.UseAnim;
 import net.minecraft.world.item.component.CustomData;
+import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.Vec3;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
@@ -28,6 +36,7 @@ import net.neoforged.neoforge.client.event.ClientPlayerNetworkEvent;
 import net.neoforged.neoforge.client.event.ClientTickEvent;
 import net.neoforged.neoforge.client.event.InputEvent;
 import net.neoforged.neoforge.client.event.RenderGuiLayerEvent;
+import net.neoforged.neoforge.client.event.RenderLevelStageEvent;
 import net.neoforged.neoforge.client.event.RenderNameTagEvent;
 import net.neoforged.neoforge.client.event.ScreenEvent;
 import net.neoforged.neoforge.client.gui.VanillaGuiLayers;
@@ -36,18 +45,30 @@ import org.lwjgl.glfw.GLFW;
 
 @EventBusSubscriber(modid = VeyloriaConstants.MOD_ID, value = Dist.CLIENT)
 public final class VeyloriaClientEvents {
+    private static final float TARGET_OUTLINE_RED = 0.92F;
+    private static final float TARGET_OUTLINE_GREEN = 0.20F;
+    private static final float TARGET_OUTLINE_BLUE = 0.20F;
+    private static final float TARGET_OUTLINE_ALPHA = 1.0F;
+    private static final double TARGET_OUTLINE_INFLATE = 0.06D;
+    private static boolean attackKeyWasDown;
+    private static int lastAttackIntentTick = Integer.MIN_VALUE / 4;
+
     private VeyloriaClientEvents() {
     }
 
     @SubscribeEvent
     public static void onLogin(ClientPlayerNetworkEvent.LoggingIn event) {
         VeyloriaClientState.instance().reset();
+        attackKeyWasDown = false;
+        lastAttackIntentTick = Integer.MIN_VALUE / 4;
         syncUseKeyState(Minecraft.getInstance(), false);
     }
 
     @SubscribeEvent
     public static void onLogout(ClientPlayerNetworkEvent.LoggingOut event) {
         VeyloriaClientState.instance().reset();
+        attackKeyWasDown = false;
+        lastAttackIntentTick = Integer.MIN_VALUE / 4;
         syncUseKeyState(Minecraft.getInstance(), false);
     }
 
@@ -55,10 +76,13 @@ public final class VeyloriaClientEvents {
     public static void onClientTick(ClientTickEvent.Post event) {
         Minecraft minecraft = Minecraft.getInstance();
         if (minecraft.player == null) {
+            attackKeyWasDown = false;
+            lastAttackIntentTick = Integer.MIN_VALUE / 4;
             VeyloriaClientState.instance().stopAutoConsumableUse();
             syncUseKeyState(minecraft, false);
             return;
         }
+        syncMeleeAttackIntent(minecraft);
         syncAutoConsumableUse(minecraft);
         minecraft.player.getInventory().selected = PlayerLoadoutData.ACTIVE_MIRROR_INVENTORY_SLOT;
         VeyloriaClientState.instance().prune(minecraft.player.tickCount);
@@ -188,6 +212,26 @@ public final class VeyloriaClientEvents {
     }
 
     @SubscribeEvent
+    public static void onRenderLevelStage(RenderLevelStageEvent event) {
+        if (event.getStage() != RenderLevelStageEvent.Stage.AFTER_TRANSLUCENT_BLOCKS) {
+            return;
+        }
+        Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft == null || minecraft.player == null || minecraft.level == null || minecraft.options.hideGui) {
+            return;
+        }
+        UUID targetUuid = VeyloriaClientState.instance().currentTargetUuid();
+        if (targetUuid == null) {
+            return;
+        }
+        LivingEntity target = resolveLockedTarget(minecraft, targetUuid);
+        if (target == null) {
+            return;
+        }
+        renderTargetOutline(event, minecraft, target);
+    }
+
+    @SubscribeEvent
     public static void onInventoryOpening(ScreenEvent.Opening event) {
         if (!(event.getNewScreen() instanceof InventoryScreen)) {
             return;
@@ -298,6 +342,10 @@ public final class VeyloriaClientEvents {
                     tickNow() + 60
                 );
             }
+            return;
+        }
+        if (marker.startsWith("[veyloria:target]")) {
+            state.setCurrentTarget(parseUuid(fieldValue(marker, "uuid")), tickNow() + 15);
             return;
         }
         if (marker.startsWith("[veyloria:gain]")) {
@@ -488,6 +536,58 @@ public final class VeyloriaClientEvents {
         if (minecraft.player != null) {
             minecraft.player.getInventory().selected = PlayerLoadoutData.ACTIVE_MIRROR_INVENTORY_SLOT;
         }
+    }
+
+    private static void syncMeleeAttackIntent(Minecraft minecraft) {
+        if (minecraft == null || minecraft.player == null || minecraft.getConnection() == null) {
+            attackKeyWasDown = false;
+            lastAttackIntentTick = Integer.MIN_VALUE / 4;
+            return;
+        }
+        boolean attackDown = isPhysicalKeyDown(minecraft, minecraft.options.keyAttack);
+        boolean canProcess = minecraft.screen == null && minecraft.gameMode != null;
+        if (canProcess && attackDown) {
+            int tick = minecraft.player.tickCount;
+            boolean pressedThisTick = !attackKeyWasDown;
+            boolean holdPulse = tick - lastAttackIntentTick >= 2;
+            if (pressedThisTick || holdPulse) {
+                minecraft.getConnection().send(new VeyloriaNetwork.MeleeAttackIntentPayload());
+                lastAttackIntentTick = tick;
+            }
+        } else if (!attackDown) {
+            lastAttackIntentTick = Integer.MIN_VALUE / 4;
+        }
+        attackKeyWasDown = attackDown;
+    }
+
+    private static void renderTargetOutline(RenderLevelStageEvent event, Minecraft minecraft, LivingEntity target) {
+        PoseStack poseStack = event.getPoseStack();
+        Vec3 cameraPos = event.getCamera().getPosition();
+        AABB box = target.getBoundingBox().inflate(TARGET_OUTLINE_INFLATE)
+            .move(-cameraPos.x, -cameraPos.y, -cameraPos.z);
+        MultiBufferSource.BufferSource buffers = minecraft.renderBuffers().bufferSource();
+        VertexConsumer lines = buffers.getBuffer(RenderType.lines());
+        LevelRenderer.renderLineBox(
+            poseStack,
+            lines,
+            box,
+            TARGET_OUTLINE_RED,
+            TARGET_OUTLINE_GREEN,
+            TARGET_OUTLINE_BLUE,
+            TARGET_OUTLINE_ALPHA
+        );
+        buffers.endBatch(RenderType.lines());
+    }
+
+    private static LivingEntity resolveLockedTarget(Minecraft minecraft, UUID targetUuid) {
+        if (minecraft == null || minecraft.player == null || targetUuid == null) {
+            return null;
+        }
+        return minecraft.player.level().getEntitiesOfClass(
+            LivingEntity.class,
+            minecraft.player.getBoundingBox().inflate(64.0D),
+            entity -> entity.getUUID().equals(targetUuid) && entity.isAlive() && !entity.isRemoved()
+        ).stream().findFirst().orElse(null);
     }
 
     private static void syncAutoConsumableUse(Minecraft minecraft) {

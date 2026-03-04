@@ -28,11 +28,14 @@ public final class PlayerLoadoutData implements INBTSerializable<CompoundTag> {
     public static final int SLOT_AMMO = 16;
     public static final int SLOT_COUNT = 17;
     public static final int ACTIVE_MIRROR_INVENTORY_SLOT = 0;
+    public static final int AMMO_SLOT_MAX_STACK = 64;
 
     private static final String TAG_ACTIVE_SLOT = "activeWeaponSlot";
     private static final String TAG_ITEMS = "items";
     private static final String TAG_SLOT = "slot";
     private static final String TAG_ITEM = "item";
+    private static final String TAG_STORED_COUNT = "storedCount";
+    private static final int ITEM_STACK_CODEC_MAX_COUNT = 99;
 
     private final ItemStack[] items = new ItemStack[SLOT_COUNT];
     private int activeSlot = SLOT_MAIN_WEAPON;
@@ -49,7 +52,7 @@ public final class PlayerLoadoutData implements INBTSerializable<CompoundTag> {
         if (!isValidSlot(slot)) {
             return;
         }
-        items[slot] = normalize(stack);
+        items[slot] = normalize(slot, stack);
     }
 
     public int activeSlot() {
@@ -89,7 +92,14 @@ public final class PlayerLoadoutData implements INBTSerializable<CompoundTag> {
             }
             CompoundTag entry = new CompoundTag();
             entry.putInt(TAG_SLOT, slot);
-            entry.put(TAG_ITEM, stack.saveOptional(provider));
+            ItemStack stackToSave = stack;
+            int actualCount = stack.getCount();
+            if (actualCount > ITEM_STACK_CODEC_MAX_COUNT) {
+                stackToSave = stack.copy();
+                stackToSave.setCount(ITEM_STACK_CODEC_MAX_COUNT);
+                entry.putInt(TAG_STORED_COUNT, actualCount);
+            }
+            entry.put(TAG_ITEM, stackToSave.saveOptional(provider));
             list.add(entry);
         }
         root.put(TAG_ITEMS, list);
@@ -107,12 +117,47 @@ public final class PlayerLoadoutData implements INBTSerializable<CompoundTag> {
             if (!isValidSlot(slot)) {
                 continue;
             }
-            items[slot] = normalize(ItemStack.parseOptional(provider, entry.getCompound(TAG_ITEM)));
+            ItemStack restored = normalize(slot, ItemStack.parseOptional(provider, entry.getCompound(TAG_ITEM)));
+            if (!restored.isEmpty() && entry.contains(TAG_STORED_COUNT, Tag.TAG_INT)) {
+                restored = withRestoredCount(slot, restored, entry.getInt(TAG_STORED_COUNT));
+            }
+            items[slot] = restored;
         }
     }
 
-    private static ItemStack normalize(ItemStack stack) {
-        return stack == null || stack.isEmpty() ? ItemStack.EMPTY : stack.copy();
+    private static ItemStack withRestoredCount(int slot, ItemStack stack, int count) {
+        if (stack == null || stack.isEmpty()) {
+            return ItemStack.EMPTY;
+        }
+        ItemStack restored = stack.copy();
+        restored.setCount(count);
+        return normalize(slot, restored);
+    }
+
+    private static ItemStack normalize(int slot, ItemStack stack) {
+        if (stack == null || stack.isEmpty()) {
+            return ItemStack.EMPTY;
+        }
+        ItemStack normalized = stack.copy();
+        int count = normalized.getCount();
+        if (count <= 0) {
+            return ItemStack.EMPTY;
+        }
+        int maxCount = maxCountForSlot(slot, normalized);
+        if (count > maxCount) {
+            normalized.setCount(maxCount);
+        }
+        return normalized;
+    }
+
+    private static int maxCountForSlot(int slot, ItemStack stack) {
+        if (isAmmoSlot(slot)) {
+            return AMMO_SLOT_MAX_STACK;
+        }
+        if (isStackableLoadoutSlot(slot)) {
+            return Math.min(64, stack.getMaxStackSize());
+        }
+        return 1;
     }
 
     private static boolean isValidSlot(int slot) {
@@ -149,5 +194,12 @@ public final class PlayerLoadoutData implements INBTSerializable<CompoundTag> {
 
     public static boolean contributesToStats(int slot) {
         return isWeaponSlot(slot) || isArmorSlot(slot) || isAccessorySlot(slot);
+    }
+
+    public static int maxStackForLoadoutSlot(int slot) {
+        if (isAmmoSlot(slot)) {
+            return AMMO_SLOT_MAX_STACK;
+        }
+        return 64;
     }
 }

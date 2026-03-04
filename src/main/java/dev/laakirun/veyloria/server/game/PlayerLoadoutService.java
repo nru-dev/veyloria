@@ -229,7 +229,7 @@ public final class PlayerLoadoutService {
 
     private static int preferredAmmoSlot(ItemStack stack, PlayerLoadoutData loadout) {
         ItemStack stored = loadout.getItem(PlayerLoadoutData.SLOT_AMMO);
-        if (hasStackRoom(stored, stack) || stored.isEmpty()) {
+        if (hasStackRoom(PlayerLoadoutData.SLOT_AMMO, stored, stack) || stored.isEmpty()) {
             return PlayerLoadoutData.SLOT_AMMO;
         }
         return -1;
@@ -238,7 +238,7 @@ public final class PlayerLoadoutService {
     private static int preferredConsumableSlot(ItemStack stack, PlayerLoadoutData loadout) {
         for (int slot = PlayerLoadoutData.SLOT_CONSUMABLE_1; slot <= PlayerLoadoutData.SLOT_CONSUMABLE_4; slot++) {
             ItemStack stored = loadout.getItem(slot);
-            if (hasStackRoom(stored, stack)) {
+            if (hasStackRoom(slot, stored, stack)) {
                 return slot;
             }
         }
@@ -466,14 +466,17 @@ public final class PlayerLoadoutService {
         return item != null && item.equipSlot() == EquipSlot.AMMO;
     }
 
-    private static boolean hasStackRoom(ItemStack stored, ItemStack incoming) {
+    private static boolean hasStackRoom(int loadoutSlot, ItemStack stored, ItemStack incoming) {
         if (stored.isEmpty() || incoming.isEmpty() || !stored.isStackable()) {
             return false;
         }
         if (!ItemStack.isSameItemSameComponents(stored, incoming)) {
             return false;
         }
-        return stored.getCount() < Math.min(stored.getMaxStackSize(), incoming.getMaxStackSize());
+        int maxCount = PlayerLoadoutData.isAmmoSlot(loadoutSlot)
+            ? PlayerLoadoutData.AMMO_SLOT_MAX_STACK
+            : Math.min(stored.getMaxStackSize(), incoming.getMaxStackSize());
+        return stored.getCount() < maxCount;
     }
 
     private static boolean isConsumableItem(ItemStack stack, RpgItemData item) {

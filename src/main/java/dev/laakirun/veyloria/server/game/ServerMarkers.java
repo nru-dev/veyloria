@@ -14,6 +14,7 @@ public final class ServerMarkers {
     public static final String LOOT = "[veyloria:loot]";
     public static final String ERROR = "[veyloria:error]";
     public static final String BARS = "[veyloria:bars]";
+    public static final String TARGET = "[veyloria:target]";
 
     private ServerMarkers() {
     }
@@ -64,6 +65,12 @@ public final class ServerMarkers {
                 "|hpMax=" + hpMax +
                 "|mana=" + manaCurrent +
                 "|manaMax=" + manaMax
+        ));
+    }
+
+    public static void sendTarget(ServerPlayer player, UUID targetUuid) {
+        player.sendSystemMessage(Component.literal(
+            TARGET + "|uuid=" + (targetUuid == null ? "" : targetUuid)
         ));
     }
 }

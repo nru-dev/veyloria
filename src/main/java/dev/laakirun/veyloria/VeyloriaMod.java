@@ -3,6 +3,7 @@ package dev.laakirun.veyloria;
 import com.mojang.logging.LogUtils;
 import dev.laakirun.veyloria.common.VeyloriaConstants;
 import dev.laakirun.veyloria.common.registry.VeyloriaAttachments;
+import dev.laakirun.veyloria.common.registry.VeyloriaEntityTypes;
 import dev.laakirun.veyloria.common.registry.VeyloriaMenus;
 import dev.laakirun.veyloria.server.VeyloriaServerRuntime;
 import dev.laakirun.veyloria.server.config.ConfigService;
@@ -21,6 +22,7 @@ public final class VeyloriaMod {
 
     public VeyloriaMod(IEventBus modEventBus) {
         VeyloriaAttachments.register(modEventBus);
+        VeyloriaEntityTypes.register(modEventBus);
         VeyloriaMenus.register(modEventBus);
         NeoForge.EVENT_BUS.register(ServerEvents.class);
         VeyloriaServerEvents.register();

@@ -3,6 +3,7 @@ package dev.laakirun.veyloria.common.registry;
 import dev.laakirun.veyloria.common.item.PlayerLoadoutData;
 import dev.laakirun.veyloria.common.VeyloriaConstants;
 import dev.laakirun.veyloria.common.item.RpgItemData;
+import dev.laakirun.veyloria.common.targeting.PlayerTargetState;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.neoforge.attachment.AttachmentType;
 import net.neoforged.neoforge.registries.DeferredHolder;
@@ -18,6 +19,9 @@ public final class VeyloriaAttachments {
 
     public static final DeferredHolder<AttachmentType<?>, AttachmentType<PlayerLoadoutData>> PLAYER_LOADOUT =
         ATTACHMENTS.register("player_loadout", () -> AttachmentType.serializable(PlayerLoadoutData::new).copyOnDeath().build());
+
+    public static final DeferredHolder<AttachmentType<?>, AttachmentType<PlayerTargetState>> PLAYER_TARGET =
+        ATTACHMENTS.register("player_target", () -> AttachmentType.serializable(PlayerTargetState::new).copyOnDeath().build());
 
     private VeyloriaAttachments() {
     }

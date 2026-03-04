@@ -6,6 +6,47 @@
 - Passive stat aggregation now reads directly from equipped loadout slots instead of only the currently held weapon plus mirrored armor. This makes sword, bow, and other equipped weapon bonuses apply immediately even when that weapon is not the active one in hand.
 - The custom inventory menu and screen now share one layout definition so slot frames, click targets, and storage rows stay aligned as the screen evolves.
 
+## 2026-03-04 Target Lock Addendum
+
+- Added a dedicated targeting subsystem (`TargetingProfile`, `TargetingService`, `PlayerTargetState`) instead of embedding targeting logic directly in weapon handlers.
+- Current target selection is auto-driven by FOV + range + LOS; lock requires LOS at selection time and stores target UUID in a player attachment for both client HUD and server systems.
+- Added a server-authoritative `HomingArrowEntity` with target UUID sync, soft steering that preserves vanilla arrow speed, and LOS memory (`lastKnownPos` + `memoryTicks`) without any wall clipping or noClip behavior.
+- Bow shots now preserve vanilla launch trajectory and are upgraded to homing arrows only when a valid current lock target exists.
+- Target marker rendering is implemented as a HUD overlay with world-to-screen projection and strict visibility checks (valid target + on-screen + LOS when required).
+
+## 2026-03-04 Server Target Sync Addendum
+
+- Melee targeting is now server-authoritative end-to-end: the server selects attackable lock candidates and exposes them to the client HUD via marker channel `[veyloria:target]`.
+- Client no longer computes lock targets locally each tick; it only renders the current server-provided target UUID.
+- Melee intent resolution now prioritizes the current server lock target before ray fallback, so the target under marker and the target receiving melee damage are aligned.
+- Server lock candidate filtering is restricted to managed RPG mobs (`MobTemplate` exists, hostility is not friendly, mob is not in evade immunity).
+
+## 2026-03-04 Starter Bow Addendum
+
+- New players now receive a one-time starter legendary test bow (`test_best_bow`) in addition to the existing test sword.
+- The same onboarding grant also gives starter arrows (`4 x 64`) so bow gameplay can be tested immediately without crafting or loot dependency.
+
+## 2026-03-05 Target Visual + Arrow Flight Addendum
+
+- Removed the target HUD lock frame and textual target panel (name, distance, HP) to reduce on-screen clutter during combat.
+- Current server-selected target is now highlighted directly in-world with a red outline (client-side glow + dedicated local scoreboard team color).
+- `HomingArrowEntity` now ignores gravity so locked bow shots do not have ballistic drop while preserving the existing homing steering logic.
+
+## 2026-03-05 Target Priority + Stuck Arrow Addendum
+
+- Target lock selection now prioritizes entities directly intersected by the look ray (the entity the player is currently looking at).
+- If no direct look-ray hit exists, lock falls back to a cursor score dominated by center-angle offset and lightly weighted by distance.
+- Default lock FOV was increased from `90` to `135` degrees (about 1.5x wider).
+- Default homing turn rate was increased from `0.10` to `0.20` (2x tighter steering).
+- Homing arrows now stop homing when embedded in block/ground (`inGround`), preventing repeated failed lift attempts after impact.
+
+## 2026-03-05 Weapon Range + Ammo Capacity Addendum
+
+- Server lock range is now weapon-aware:
+  - melee weapons (`sword_2h`, `axe`) use melee reach targeting range,
+  - starter bow (`templateCode = test_best_bow`) uses `50` block target range.
+- Ammo loadout slot capacity was reverted back to vanilla `64` (slot-local), because `9999` stacks caused unstable runtime/save behavior in practice.
+
 # Veyloria MVP Decisions
 
 ## 2026-03-04
