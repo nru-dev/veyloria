@@ -47,10 +47,11 @@ public final class MobSpawnService {
     private static final double IDLE_ROAM_MIN_RADIUS = 30.0D;
     private static final long NAMEPLATE_HEARTBEAT_TICKS = 20L;
     private static final int NAMEPLATE_SEGMENTS = 12;
-    private static final int MIN_ACTIVE_MOBS_FLOOR = 340;
-    private static final double NORMAL_DENSITY_MULTIPLIER = 2.4D;
-    private static final double NORMAL_PACK_MULTIPLIER = 2.0D;
-    private static final double MIN_INTER_MOB_DISTANCE = 3.3D;
+    private static final int MIN_ACTIVE_MOBS_FLOOR = 520;
+    private static final int MIN_ACTIVATION_RADIUS = 224;
+    private static final double NORMAL_DENSITY_MULTIPLIER = 3.0D;
+    private static final double NORMAL_PACK_MULTIPLIER = 2.3D;
+    private static final double MIN_INTER_MOB_DISTANCE = 2.2D;
     private static final String TAG_CUSTOM_MOB = "veyloria_custom_mob";
     private static final String TAG_TEMPLATE_ID = "veyloria_template_id";
     private static final String TAG_SPAWN_GROUP_ID = "veyloria_spawn_group_id";
@@ -75,7 +76,7 @@ public final class MobSpawnService {
         clearExpiredNeutralAggro(gameTime);
         VeyloriaServerRuntime runtime = VeyloriaServerRuntime.instance();
         int maxActivePerDimension = Math.max(runtime.serverConfig().maxActiveMobsPerDimension(), MIN_ACTIVE_MOBS_FLOOR);
-        double activationRadius = runtime.serverConfig().spawnActivationRadius();
+        double activationRadius = Math.max(runtime.serverConfig().spawnActivationRadius(), MIN_ACTIVATION_RADIUS);
         double activationRadiusSqr = activationRadius * activationRadius;
 
         for (ServerLevel level : server.getAllLevels()) {

@@ -36,6 +36,7 @@ import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.ExperienceOrb;
 import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.Mob;
@@ -59,6 +60,7 @@ import net.neoforged.neoforge.event.entity.EntityJoinLevelEvent;
 import net.neoforged.neoforge.event.entity.player.AttackEntityEvent;
 import net.neoforged.neoforge.event.entity.player.PlayerEvent;
 import net.neoforged.neoforge.event.entity.player.PlayerInteractEvent;
+import net.neoforged.neoforge.event.entity.player.PlayerXpEvent;
 import net.neoforged.neoforge.event.server.ServerStoppingEvent;
 import net.neoforged.neoforge.event.tick.ServerTickEvent;
 import org.slf4j.Logger;
@@ -77,6 +79,7 @@ public final class VeyloriaServerEvents {
     private static final double CRIT_MAX_CHANCE = 0.55D;
     private static final double CRIT_MULTIPLIER = 1.80D;
     private static final double CRIT_SWORD_BONUS = 0.10D;
+    private static final double DEFAULT_PLAYER_MAX_HEALTH = 20.0D;
     private final java.util.Map<UUID, Long> lastPlayerAttackTick = new ConcurrentHashMap<>();
     private final java.util.Map<UUID, Long> lastSkillUseTick = new ConcurrentHashMap<>();
     private final java.util.Map<UUID, Double> manaByPlayer = new ConcurrentHashMap<>();
@@ -216,6 +219,11 @@ public final class VeyloriaServerEvents {
     @SubscribeEvent
     public void onEntityJoinLevel(EntityJoinLevelEvent event) {
         if (event.getLevel().isClientSide()) {
+            return;
+        }
+        if (event.getEntity() instanceof ExperienceOrb orb) {
+            event.setCanceled(true);
+            orb.discard();
             return;
         }
         if (!(event.getEntity() instanceof Mob mob)) {
@@ -412,6 +420,24 @@ public final class VeyloriaServerEvents {
     }
 
     @SubscribeEvent
+    public void onPlayerPickupXp(PlayerXpEvent.PickupXp event) {
+        event.setCanceled(true);
+        event.getOrb().discard();
+    }
+
+    @SubscribeEvent
+    public void onPlayerXpChange(PlayerXpEvent.XpChange event) {
+        event.setAmount(0);
+        event.setCanceled(true);
+    }
+
+    @SubscribeEvent
+    public void onPlayerLevelChange(PlayerXpEvent.LevelChange event) {
+        event.setLevels(0);
+        event.setCanceled(true);
+    }
+
+    @SubscribeEvent
     public void onMobDeath(LivingDeathEvent event) {
         if (!(event.getEntity().level() instanceof ServerLevel level)) {
             return;
@@ -447,6 +473,7 @@ public final class VeyloriaServerEvents {
                 * VeyloriaServerRuntime.instance().ratesConfig().currencyRate());
             profile.addCurrency(copper);
             ServerMarkers.sendGain(player, xp, copper);
+            player.sendSystemMessage(Component.literal("Опыт с моба: +" + xp));
             syncPlayerHud(player, profile);
             if (gainResult.leveledUp()) {
                 player.sendSystemMessage(Component.literal("Новый уровень: " + gainResult.previousLevel() + " -> " + gainResult.newLevel()));
@@ -1404,13 +1431,13 @@ public final class VeyloriaServerEvents {
 
     private void syncPlayerHud(ServerPlayer player, CharacterProfile profile) {
         int xpToNext = Math.max(1, VeyloriaServerRuntime.instance().levelService().xpToNextLevel(profile.level()));
-        player.experienceLevel = profile.level();
-        player.experienceProgress = Math.min(1.0F, profile.xpCurrent() / (float) xpToNext);
-        double maxHealth = VeyloriaServerRuntime.instance().playerStatService().computePlayerMaxHealth(player, profile);
+        player.experienceLevel = Math.max(1, profile.level());
+        player.experienceProgress = (float) Math.max(0.0D, Math.min(1.0D, profile.xpCurrent() / (double) xpToNext));
+        player.totalExperience = Math.max(0, profile.xpTotal());
         if (player.getAttribute(Attributes.MAX_HEALTH) != null) {
-            player.getAttribute(Attributes.MAX_HEALTH).setBaseValue(maxHealth);
-            if (player.getHealth() > maxHealth) {
-                player.setHealth((float) maxHealth);
+            player.getAttribute(Attributes.MAX_HEALTH).setBaseValue(DEFAULT_PLAYER_MAX_HEALTH);
+            if (player.getHealth() > DEFAULT_PLAYER_MAX_HEALTH) {
+                player.setHealth((float) DEFAULT_PLAYER_MAX_HEALTH);
             }
         }
         int maxMana = 0;

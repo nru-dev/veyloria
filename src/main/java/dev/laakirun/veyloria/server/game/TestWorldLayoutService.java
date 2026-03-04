@@ -40,7 +40,7 @@ public final class TestWorldLayoutService {
     };
 
     private static final int DECORATION_CHUNK_RADIUS = 6;
-    private static final int MAX_CHUNKS_PER_TICK = 3;
+    private static final int MAX_CHUNKS_PER_TICK = 12;
     private static final int SEPARATOR_HALF_THICKNESS = 1;
     private static final int SIGN_OFFSET_X = SAFE_HALF_WIDTH + 2;
     private static final BlockState ROAD_BLOCK = Blocks.STONE_BRICKS.defaultBlockState();
@@ -141,9 +141,6 @@ public final class TestWorldLayoutService {
             for (int dz = -2; dz <= 2; dz++) {
                 int chunkX = spawnChunk.x + dx;
                 int chunkZ = spawnChunk.z + dz;
-                if (!isManagedChunk(chunkX, chunkZ)) {
-                    continue;
-                }
                 decorateChunk(level, chunkX, chunkZ);
                 decoratedOverworldChunks.add(chunkKey(chunkX, chunkZ));
             }
@@ -174,9 +171,6 @@ public final class TestWorldLayoutService {
             }
             int chunkX = chunkX(key);
             int chunkZ = chunkZ(key);
-            if (!isManagedChunk(chunkX, chunkZ)) {
-                continue;
-            }
             decorateChunk(level, chunkX, chunkZ);
             decoratedOverworldChunks.add(key);
             decorated++;
@@ -187,14 +181,11 @@ public final class TestWorldLayoutService {
         int minX = chunkX << 4;
         int minZ = chunkZ << 4;
         for (int x = minX; x < minX + 16; x++) {
-            if (Math.abs(x) > ZONE_HALF_WIDTH) {
-                continue;
-            }
             for (int z = minZ; z < minZ + 16; z++) {
-                if (!isManagedNorthSouthBand(z)) {
+                normalizeFlatColumn(level, x, z);
+                if (Math.abs(x) > ZONE_HALF_WIDTH || !isManagedNorthSouthBand(z)) {
                     continue;
                 }
-                normalizeFlatColumn(level, x, z);
                 boolean separator = isSeparatorLineZ(z);
                 boolean road = isRoadColumn(x);
                 boolean fence = isPerimeterFence(x, z);
@@ -260,17 +251,6 @@ public final class TestWorldLayoutService {
             }
         }
         return false;
-    }
-
-    private static boolean isManagedChunk(int chunkX, int chunkZ) {
-        int minX = chunkX << 4;
-        int maxX = minX + 15;
-        int minZ = chunkZ << 4;
-        int maxZ = minZ + 15;
-        return maxX >= -ZONE_HALF_WIDTH
-            && minX <= ZONE_HALF_WIDTH
-            && maxZ >= northEdge()
-            && minZ <= FIRST_ZONE_SOUTH_Z;
     }
 
     private static boolean isManagedNorthSouthBand(double z) {

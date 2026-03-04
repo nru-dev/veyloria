@@ -116,7 +116,23 @@ public final class VeyloriaClientEvents {
         }
         GuiGraphics guiGraphics = event.getGuiGraphics();
         int width = minecraft.getWindow().getGuiScaledWidth();
-        int y = minecraft.getWindow().getGuiScaledHeight() - 42;
+        int height = minecraft.getWindow().getGuiScaledHeight();
+        int y = height - 42;
+        int hpCurrent = (int) Math.ceil(Math.max(0.0D, minecraft.player.getHealth()));
+        int hpMax = (int) Math.ceil(Math.max(1.0D, minecraft.player.getMaxHealth()));
+        VeyloriaClientState.ResourceBars selfBars = VeyloriaClientState.instance().playerBars(minecraft.player.getUUID());
+        if (selfBars != null) {
+            hpCurrent = selfBars.health();
+            hpMax = selfBars.healthMax();
+        }
+        guiGraphics.drawString(
+            minecraft.font,
+            "HP: " + hpCurrent + "/" + hpMax,
+            12,
+            height - 52,
+            0xFF4040,
+            false
+        );
         guiGraphics.drawString(minecraft.font, "Медь: " + VeyloriaClientState.instance().copper(), width - 96, y, 0xF0A040, false);
         if (VeyloriaClientState.instance().manaMax() > 0) {
             guiGraphics.drawString(minecraft.font,
