@@ -3,6 +3,7 @@ package dev.laakirun.veyloria.server.game;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import dev.laakirun.veyloria.common.model.CharacterProfile;
+import dev.laakirun.veyloria.common.model.HostilityType;
 import dev.laakirun.veyloria.server.VeyloriaServerRuntime;
 import dev.laakirun.veyloria.server.auth.AccountRecord;
 import dev.laakirun.veyloria.server.auth.AuthService;
@@ -17,6 +18,7 @@ import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.entity.player.Player;
 import net.neoforged.bus.api.SubscribeEvent;
@@ -30,8 +32,12 @@ import net.neoforged.neoforge.event.entity.player.PlayerEvent;
 import net.neoforged.neoforge.event.entity.player.PlayerInteractEvent;
 import net.neoforged.neoforge.event.server.ServerStoppingEvent;
 import net.neoforged.neoforge.event.tick.ServerTickEvent;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public final class VeyloriaServerEvents {
+    private static final Logger COMBAT_LOGGER = LoggerFactory.getLogger("veyloria.combat");
+
     private long lastSpawnTick;
     private long lastProfileTick;
 
@@ -132,6 +138,11 @@ public final class VeyloriaServerEvents {
         if (template == null) {
             return;
         }
+        if (template.hostilityType() == HostilityType.FRIENDLY) {
+            event.setCanceled(true);
+            ServerMarkers.sendError(player, "Friendly mobs cannot be attacked");
+            return;
+        }
         CharacterProfile profile = VeyloriaServerRuntime.instance().characterService().loadedProfile(player.getUUID());
         if (profile == null) {
             event.setCanceled(true);
@@ -141,22 +152,62 @@ public final class VeyloriaServerEvents {
         DamageSource damageSource = player.damageSources().playerAttack(player);
         target.hurt(damageSource, (float) damage);
         VeyloriaServerRuntime.instance().mobSpawnService().recordHit(target.getUUID(), player.getUUID(), player.level().getGameTime());
+        if (template.hostilityType() == HostilityType.NEUTRAL) {
+            VeyloriaServerRuntime.instance().mobSpawnService().markNeutralAggro(target.getUUID(), player.getUUID(), player.level().getGameTime());
+            if (target instanceof Mob mob) {
+                mob.setTarget(player);
+            }
+        }
+        COMBAT_LOGGER.debug("Player {} dealt {} to mob {} ({})", player.getGameProfile().getName(),
+            Math.round(damage * 100.0D) / 100.0D, target.getUUID(), template.code());
         event.setCanceled(true);
     }
 
     @SubscribeEvent
     public void onIncomingDamage(LivingIncomingDamageEvent event) {
+        Entity sourceEntity = event.getSource().getEntity();
+        MobTemplate sourceTemplate = sourceEntity == null ? null : VeyloriaServerRuntime.instance().mobSpawnService().template(sourceEntity.getUUID());
+
+        if (sourceEntity instanceof ServerPlayer playerSource && event.getEntity() instanceof LivingEntity target) {
+            MobTemplate targetTemplate = VeyloriaServerRuntime.instance().mobSpawnService().template(target.getUUID());
+            if (targetTemplate != null) {
+                if (targetTemplate.hostilityType() == HostilityType.FRIENDLY) {
+                    event.setCanceled(true);
+                    ServerMarkers.sendError(playerSource, "Friendly mobs cannot be attacked");
+                    return;
+                }
+                if (targetTemplate.hostilityType() == HostilityType.NEUTRAL) {
+                    long gameTime = target.level().getGameTime();
+                    VeyloriaServerRuntime.instance().mobSpawnService().markNeutralAggro(target.getUUID(), playerSource.getUUID(), gameTime);
+                    if (target instanceof Mob mob) {
+                        mob.setTarget(playerSource);
+                    }
+                }
+            }
+        }
+
         if (event.getEntity() instanceof ServerPlayer player) {
             if (VeyloriaServerRuntime.instance().authLockService().isLocked(player)) {
                 event.setCanceled(true);
                 return;
             }
-            Entity sourceEntity = event.getSource().getEntity();
-            if (sourceEntity != null && VeyloriaServerRuntime.instance().mobSpawnService().template(sourceEntity.getUUID()) != null) {
+            if (sourceEntity != null && sourceTemplate != null) {
+                if (sourceTemplate.hostilityType() == HostilityType.FRIENDLY) {
+                    event.setCanceled(true);
+                    return;
+                }
+                if (sourceTemplate.hostilityType() == HostilityType.NEUTRAL
+                    && !VeyloriaServerRuntime.instance().mobSpawnService().canNeutralDamage(sourceEntity.getUUID(), player.getUUID(), player.level().getGameTime())) {
+                    event.setCanceled(true);
+                    return;
+                }
                 CharacterProfile profile = VeyloriaServerRuntime.instance().characterService().loadedProfile(player.getUUID());
                 if (profile != null) {
-                    double mitigated = VeyloriaServerRuntime.instance().playerStatService().mitigateIncomingDamage(player, profile, event.getAmount());
+                    float original = event.getAmount();
+                    double mitigated = VeyloriaServerRuntime.instance().playerStatService().mitigateIncomingDamage(player, profile, original);
                     event.setAmount((float) mitigated);
+                    COMBAT_LOGGER.debug("Incoming damage to {} from {}: {} -> {}",
+                        player.getGameProfile().getName(), sourceEntity.getUUID(), original, mitigated);
                 }
             }
         }
@@ -206,6 +257,8 @@ public final class VeyloriaServerEvents {
                 player.sendSystemMessage(Component.literal("Level up: " + gainResult.previousLevel() + " -> " + gainResult.newLevel()));
             }
             VeyloriaServerRuntime.instance().characterService().save(profile);
+            COMBAT_LOGGER.debug("Rewards for {} from mob {}: +{} xp, +{} copper", player.getGameProfile().getName(),
+                template.code(), xp, copper);
         }
     }
 

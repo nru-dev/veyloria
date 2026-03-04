@@ -12,8 +12,9 @@ MVP RPG-мод для Minecraft `1.21.1` на `NeoForge`, где сервер х
 - формула уровней 1-80 и модификаторы EXP по разнице уровней
 - отдельные серверные рейты из `config/veyloria/rates.yml`
 - data-driven шаблоны предметов, мобов, loot tables и spawn groups
-- серверный спавн обычных мобов, элиты и босса рядом с авторизованными игроками
+- серверный спавн обычных мобов, элиты и босса рядом с авторизованными игроками с chunk-индексацией spawn groups
 - серверный расчёт урона по мобам, серверное распределение EXP/валюты/персонального лута
+- учёт `hostility_type` в бою (friendly/neutral/hostile), применение `aggro_radius`, `leash_radius`, `pack_spread`
 - базовые кастомные предметы через vanilla item stacks + `CustomData`
 - клиентский HUD для copper и уведомлений, tooltip RPG-предметов
 
@@ -64,5 +65,5 @@ MVP RPG-мод для Minecraft `1.21.1` на `NeoForge`, где сервер х
 ## Ограничения MVP
 
 - нет квестов, классов, талантов, PvP, аукциона, гильдий и инстансов
-- friendly/neutral AI поддержана архитектурно, но seed-контент MVP использует hostile-мобов
+- seed-контент MVP по-прежнему использует hostile-мобов, хотя runtime поддерживает friendly/neutral/hostile
 - runtime-проверка полного Minecraft-цикла в этой среде не автоматизирована; см. чеклист в `docs/manual-checklist.md`

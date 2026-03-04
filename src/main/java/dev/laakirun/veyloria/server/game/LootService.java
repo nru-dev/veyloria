@@ -10,8 +10,12 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Random;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public final class LootService {
+    private static final Logger LOGGER = LoggerFactory.getLogger("veyloria.loot");
+
     private final ContentService contentService;
     private final Random random = new Random();
 
@@ -22,6 +26,7 @@ public final class LootService {
     public List<LootRoll> roll(long lootTableId, RatesConfig ratesConfig) {
         LootTableDefinition table = contentService.lootTable(lootTableId);
         if (table == null) {
+            LOGGER.debug("Missing loot table {}, returning empty result", lootTableId);
             return List.of();
         }
         List<LootRoll> result = new ArrayList<>();
@@ -48,6 +53,7 @@ public final class LootService {
                 result.add(new LootRoll(template, quantity(selected)));
             }
         }
+        LOGGER.debug("Loot table {} rolled {} entries", lootTableId, result.size());
         return result;
     }
 

@@ -72,6 +72,10 @@ public final class ContentService {
         return List.copyOf(spawnGroupsById.values());
     }
 
+    public MobSpawnGroup spawnGroup(long id) {
+        return spawnGroupsById.get(id);
+    }
+
     private void loadItems(Connection connection) throws SQLException {
         try (ResultSet resultSet = connection.createStatement().executeQuery("SELECT * FROM item_templates WHERE enabled = 1")) {
             while (resultSet.next()) {
