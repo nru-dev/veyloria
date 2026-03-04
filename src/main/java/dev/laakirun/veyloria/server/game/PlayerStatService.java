@@ -33,11 +33,18 @@ public final class PlayerStatService {
             + stats.vitality() * (VeyloriaServerRuntime.instance().serverConfig().combat().vitalityHealthBonus() * 0.45D);
     }
 
-    public double mitigateIncomingDamage(Player player, CharacterProfile profile, double incoming) {
+    public double mitigateIncomingDamage(Player player, CharacterProfile profile, double incoming, int attackerLevel) {
         BaseStats stats = totalStats(player, profile);
-        double factor = VeyloriaServerRuntime.instance().serverConfig().combat().armorDamageReductionFactor();
-        double reduction = Math.min(0.75D, stats.armor() * factor);
-        return incoming * (1.0D - reduction);
+        double armorRating = Math.max(0.0D, stats.armor());
+        double tuning = Math.max(0.10D, VeyloriaServerRuntime.instance().serverConfig().combat().armorDamageReductionFactor() * 30.0D);
+        double scaledArmor = armorRating * tuning;
+        int safeAttackerLevel = Math.max(1, attackerLevel);
+        double denominator = Math.max(1.0D, scaledArmor + 85.0D + safeAttackerLevel * 12.0D);
+        double armorReduction = Math.min(0.85D, scaledArmor / denominator);
+        double mitigated = incoming * (1.0D - armorReduction);
+        double effectiveHealth = Math.max(20.0D, computePlayerMaxHealth(player, profile));
+        double vanillaScale = 20.0D / effectiveHealth;
+        return mitigated * vanillaScale;
     }
 
     public static double estimatedUngearedDamage(int level) {

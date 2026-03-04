@@ -391,7 +391,9 @@ public final class VeyloriaServerEvents {
                 CharacterProfile profile = VeyloriaServerRuntime.instance().characterService().loadedProfile(player.getUUID());
                 if (profile != null) {
                     float original = event.getAmount();
-                    double mitigated = VeyloriaServerRuntime.instance().playerStatService().mitigateIncomingDamage(player, profile, original);
+                    int attackerLevel = sourceTemplate == null ? profile.level() : sourceTemplate.level();
+                    double mitigated = VeyloriaServerRuntime.instance().playerStatService()
+                        .mitigateIncomingDamage(player, profile, original, attackerLevel);
                     event.setAmount((float) mitigated);
                     COMBAT_LOGGER.debug("Incoming damage to {} from {}: {} -> {}",
                         player.getGameProfile().getName(), sourceEntity.getUUID(), original, mitigated);
@@ -1268,8 +1270,10 @@ public final class VeyloriaServerEvents {
                 manaMax = (int) Math.round(maxMana(profile.level(), stats));
                 manaCurrent = (int) Math.round(Math.min(manaMax, manaByPlayer.getOrDefault(subject.getUUID(), (double) manaMax)));
             }
-            int hpCurrent = (int) Math.ceil(Math.max(0.0D, subject.getHealth()));
-            int hpMax = (int) Math.ceil(Math.max(1.0D, subject.getMaxHealth()));
+            double effectiveHpMax = Math.max(1.0D, VeyloriaServerRuntime.instance().playerStatService().computePlayerMaxHealth(subject, profile));
+            double hpRatio = Math.max(0.0D, Math.min(1.0D, subject.getHealth() / DEFAULT_PLAYER_MAX_HEALTH));
+            int hpMax = (int) Math.ceil(effectiveHpMax);
+            int hpCurrent = (int) Math.ceil(Math.max(0.0D, effectiveHpMax * hpRatio));
             subjects.put(subject.getUUID(), new SubjectBarsSnapshot(
                 subject.getUUID(),
                 subject,

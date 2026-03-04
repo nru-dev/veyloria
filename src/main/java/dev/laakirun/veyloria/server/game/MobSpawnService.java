@@ -312,6 +312,13 @@ public final class MobSpawnService {
             Entity entity = level.getEntity(entry.getKey());
             if (!(entity instanceof LivingEntity living) || !living.isAlive()) {
                 orphaned.add(entry.getKey());
+                continue;
+            }
+            if (TestWorldLayoutService.OVERWORLD_DIMENSION.equals(dimensionId)
+                && (living.getY() < TestWorldLayoutService.FLAT_BEDROCK_Y - 1.0D
+                || living.getY() > TestWorldLayoutService.FLAT_GRASS_Y + 40.0D)) {
+                living.discard();
+                orphaned.add(entry.getKey());
             }
         }
         for (UUID mobUuid : orphaned) {

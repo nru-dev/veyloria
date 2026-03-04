@@ -1,6 +1,7 @@
 package dev.laakirun.veyloria.server.game;
 
 import java.util.LinkedHashSet;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import net.minecraft.core.BlockPos;
@@ -40,7 +41,8 @@ public final class TestWorldLayoutService {
     };
 
     private static final int DECORATION_CHUNK_RADIUS = 6;
-    private static final int MAX_CHUNKS_PER_TICK = 12;
+    private static final int MAX_CHUNKS_PER_TICK = 48;
+    private static final long CHUNK_REFRESH_INTERVAL_TICKS = 40L;
     private static final int SEPARATOR_HALF_THICKNESS = 1;
     private static final int SIGN_OFFSET_X = SAFE_HALF_WIDTH + 2;
     private static final BlockState ROAD_BLOCK = Blocks.STONE_BRICKS.defaultBlockState();
@@ -48,7 +50,7 @@ public final class TestWorldLayoutService {
     private static final BlockState FENCE_BLOCK = Blocks.OAK_FENCE.defaultBlockState();
     private static final String TAG_STARTER_SPAWNED = "veyloria_starter_spawned";
 
-    private final Set<Long> decoratedOverworldChunks = ConcurrentHashMap.newKeySet();
+    private final Map<Long, Long> decoratedOverworldChunks = new ConcurrentHashMap<>();
     private boolean worldConfigured;
 
     public void onServerStarting(MinecraftServer server) {
@@ -57,7 +59,7 @@ public final class TestWorldLayoutService {
             return;
         }
         configureWorld(overworld, server);
-        decorateAroundSpawn(overworld);
+        decorateAroundSpawn(overworld, overworld.getGameTime());
     }
 
     public void tick(MinecraftServer server) {
@@ -66,7 +68,7 @@ public final class TestWorldLayoutService {
             return;
         }
         configureWorld(overworld, server);
-        decorateActiveChunks(overworld);
+        decorateActiveChunks(overworld, overworld.getGameTime());
     }
 
     public static boolean isInSafeCorridor(String dimension, double x, double z) {
@@ -116,7 +118,7 @@ public final class TestWorldLayoutService {
         if (!firstJoin && !belowSurface) {
             return;
         }
-        decorateAroundSpawn(level);
+        decorateAroundSpawn(level, level.getGameTime());
         BlockPos spawnPos = starterSpawnPos();
         player.teleportTo(level, spawnPos.getX() + 0.5D, spawnPos.getY(), spawnPos.getZ() + 0.5D, 180.0F, 0.0F);
         player.setRespawnPosition(level.dimension(), spawnPos, 180.0F, true, false);
@@ -135,19 +137,19 @@ public final class TestWorldLayoutService {
             ZONE_COUNT, ZONE_LENGTH, ZONE_HALF_WIDTH * 2, SAFE_HALF_WIDTH * 2 + 1, spawnPos.getX(), spawnPos.getY(), spawnPos.getZ());
     }
 
-    private void decorateAroundSpawn(ServerLevel level) {
+    private void decorateAroundSpawn(ServerLevel level, long gameTime) {
         ChunkPos spawnChunk = new ChunkPos(BlockPos.containing(ROAD_CENTER_X, 0, SPAWN_Z));
         for (int dx = -2; dx <= 2; dx++) {
             for (int dz = -2; dz <= 2; dz++) {
                 int chunkX = spawnChunk.x + dx;
                 int chunkZ = spawnChunk.z + dz;
                 decorateChunk(level, chunkX, chunkZ);
-                decoratedOverworldChunks.add(chunkKey(chunkX, chunkZ));
+                decoratedOverworldChunks.put(chunkKey(chunkX, chunkZ), gameTime);
             }
         }
     }
 
-    private void decorateActiveChunks(ServerLevel level) {
+    private void decorateActiveChunks(ServerLevel level, long gameTime) {
         Set<Long> candidates = new LinkedHashSet<>();
         ChunkPos spawnChunk = new ChunkPos(BlockPos.containing(ROAD_CENTER_X, 0, SPAWN_Z));
         candidates.add(chunkKey(spawnChunk.x, spawnChunk.z));
@@ -166,13 +168,14 @@ public final class TestWorldLayoutService {
             if (decorated >= MAX_CHUNKS_PER_TICK) {
                 break;
             }
-            if (decoratedOverworldChunks.contains(key)) {
+            Long lastDecoratedTick = decoratedOverworldChunks.get(key);
+            if (lastDecoratedTick != null && gameTime - lastDecoratedTick < CHUNK_REFRESH_INTERVAL_TICKS) {
                 continue;
             }
             int chunkX = chunkX(key);
             int chunkZ = chunkZ(key);
             decorateChunk(level, chunkX, chunkZ);
-            decoratedOverworldChunks.add(key);
+            decoratedOverworldChunks.put(key, gameTime);
             decorated++;
         }
     }
@@ -291,21 +294,36 @@ public final class TestWorldLayoutService {
 
     private static void normalizeFlatColumn(ServerLevel level, int x, int z) {
         BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
+        int minY = level.getMinBuildHeight();
+        int maxY = level.getMaxBuildHeight() - 1;
         int topY = level.getHeightmapPos(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, BlockPos.containing(x, 0, z)).getY();
+        for (int y = minY; y < FLAT_BEDROCK_Y; y++) {
+            pos.set(x, y, z);
+            if (!level.getBlockState(pos).isAir()) {
+                level.setBlock(pos, Blocks.AIR.defaultBlockState(), 3);
+            }
+        }
         for (int y = FLAT_GRASS_Y + 1; y <= topY + 1; y++) {
             pos.set(x, y, z);
             if (!level.getBlockState(pos).isAir()) {
                 level.setBlock(pos, Blocks.AIR.defaultBlockState(), 3);
             }
         }
-        pos.set(x, FLAT_BEDROCK_Y, z);
-        level.setBlock(pos, Blocks.BEDROCK.defaultBlockState(), 3);
+        if (FLAT_BEDROCK_Y >= minY && FLAT_BEDROCK_Y <= maxY) {
+            pos.set(x, FLAT_BEDROCK_Y, z);
+            level.setBlock(pos, Blocks.BEDROCK.defaultBlockState(), 3);
+        }
         for (int y = FLAT_DIRT_MIN_Y; y <= FLAT_DIRT_MAX_Y; y++) {
+            if (y < minY || y > maxY) {
+                continue;
+            }
             pos.set(x, y, z);
             level.setBlock(pos, Blocks.DIRT.defaultBlockState(), 3);
         }
-        pos.set(x, FLAT_GRASS_Y, z);
-        level.setBlock(pos, Blocks.GRASS_BLOCK.defaultBlockState(), 3);
+        if (FLAT_GRASS_Y >= minY && FLAT_GRASS_Y <= maxY) {
+            pos.set(x, FLAT_GRASS_Y, z);
+            level.setBlock(pos, Blocks.GRASS_BLOCK.defaultBlockState(), 3);
+        }
     }
 
     private static long chunkKey(int chunkX, int chunkZ) {
