@@ -33,8 +33,10 @@ import net.minecraft.nbt.CompoundTag;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.tags.DamageTypeTags;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.damagesource.DamageSource;
+import net.minecraft.world.damagesource.CombatRules;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.ExperienceOrb;
 import net.minecraft.world.entity.EquipmentSlot;
@@ -431,9 +433,10 @@ public final class VeyloriaServerEvents {
                     int attackerLevel = sourceTemplate == null ? profile.level() : sourceTemplate.level();
                     double mitigated = VeyloriaServerRuntime.instance().playerStatService()
                         .mitigateIncomingDamage(player, profile, original, attackerLevel);
-                    event.setAmount((float) mitigated);
-                    COMBAT_LOGGER.debug("Incoming damage to {} from {}: {} -> {}",
-                        player.getGameProfile().getName(), sourceEntity.getUUID(), original, mitigated);
+                    float compensated = compensateVanillaArmorReduction(player, event.getSource(), (float) mitigated);
+                    event.setAmount(compensated);
+                    COMBAT_LOGGER.debug("Incoming damage to {} from {}: {} -> {} -> {}",
+                        player.getGameProfile().getName(), sourceEntity.getUUID(), original, mitigated, compensated);
                 }
             }
         }
@@ -853,6 +856,30 @@ public final class VeyloriaServerEvents {
         }
         String normalized = messageId.toLowerCase(Locale.ROOT);
         return normalized.contains("onfire") || normalized.contains("infire") || normalized.equals("in_fire");
+    }
+
+    private static float compensateVanillaArmorReduction(ServerPlayer player, DamageSource source, float desiredDamage) {
+        if (desiredDamage <= 0.0F || source == null || source.is(DamageTypeTags.BYPASSES_ARMOR)) {
+            return Math.max(0.0F, desiredDamage);
+        }
+        float armor = Math.max(0.0F, player.getArmorValue());
+        float toughness = (float) Math.max(0.0D, player.getAttributeValue(Attributes.ARMOR_TOUGHNESS));
+        if (armor <= 0.0F && toughness <= 0.0F) {
+            return desiredDamage;
+        }
+        float rawGuess = desiredDamage;
+        for (int iteration = 0; iteration < 4; iteration++) {
+            float postArmor = CombatRules.getDamageAfterAbsorb(player, rawGuess, source, armor, toughness);
+            if (postArmor <= 0.0001F) {
+                break;
+            }
+            float scale = desiredDamage / postArmor;
+            rawGuess *= scale;
+            if (Math.abs(1.0F - scale) < 0.01F) {
+                break;
+            }
+        }
+        return Math.max(0.0F, rawGuess);
     }
 
     private BaseStatsSnapshot snapshotStats(ServerPlayer player, CharacterProfile profile) {
@@ -1488,8 +1515,8 @@ public final class VeyloriaServerEvents {
         }
         int maxMana = 0;
         int currentMana = 0;
+        BaseStatsSnapshot stats = snapshotStats(player, profile);
         if (hasManaWeaponEquipped(player)) {
-            BaseStatsSnapshot stats = snapshotStats(player, profile);
             maxMana = (int) Math.round(maxMana(profile.level(), stats));
             currentMana = (int) Math.round(Math.min(maxMana, manaByPlayer.getOrDefault(player.getUUID(), (double) maxMana)));
             manaByPlayer.put(player.getUUID(), (double) currentMana);
