@@ -176,18 +176,28 @@ public final class VeyloriaServerEvents {
 
     @SubscribeEvent
     public void onServerTick(ServerTickEvent.Post event) {
+        VeyloriaServerRuntime runtime = VeyloriaServerRuntime.instance();
+        if (runtime.serverConfig() == null
+            || runtime.authService() == null
+            || runtime.authLockService() == null
+            || runtime.characterService() == null
+            || runtime.mobSpawnService() == null
+            || runtime.testWorldLayoutService() == null
+            || runtime.gearDropService() == null) {
+            return;
+        }
         long gameTime = event.getServer().overworld().getGameTime();
         boolean shouldSyncProfile = gameTime - lastProfileTick >= PROFILE_SYNC_INTERVAL_TICKS;
-        VeyloriaServerRuntime.instance().testWorldLayoutService().tick(event.getServer());
-        VeyloriaServerRuntime.instance().gearDropService().tick(event.getServer());
+        runtime.testWorldLayoutService().tick(event.getServer());
+        runtime.gearDropService().tick(event.getServer());
         for (ServerPlayer player : event.getServer().getPlayerList().getPlayers()) {
             disableHunger(player);
             enforceBuildMode(player);
             enforceRequiredLevel(player);
             enforceTwoHandedRule(player);
-            VeyloriaServerRuntime.instance().authLockService().enforce(player);
+            runtime.authLockService().enforce(player);
             if (shouldSyncProfile && isAuthenticated(player)) {
-                CharacterProfile profile = VeyloriaServerRuntime.instance().characterService().loadedProfile(player.getUUID());
+                CharacterProfile profile = runtime.characterService().loadedProfile(player.getUUID());
                 if (profile != null) {
                     syncPlayerHud(player, profile);
                 }
@@ -198,8 +208,8 @@ public final class VeyloriaServerEvents {
             broadcastPlayerBars(event.getServer(), gameTime);
             lastProfileTick = gameTime;
         }
-        if (gameTime - lastSpawnTick >= VeyloriaServerRuntime.instance().serverConfig().spawnTickInterval()) {
-            VeyloriaServerRuntime.instance().mobSpawnService().tick(event.getServer());
+        if (gameTime - lastSpawnTick >= runtime.serverConfig().spawnTickInterval()) {
+            runtime.mobSpawnService().tick(event.getServer());
             lastSpawnTick = gameTime;
         }
     }
@@ -213,6 +223,9 @@ public final class VeyloriaServerEvents {
             return;
         }
         MobSpawnService spawnService = VeyloriaServerRuntime.instance().mobSpawnService();
+        if (spawnService == null) {
+            return;
+        }
         if (spawnService.isManagedMob(mob)) {
             spawnService.registerManagedMob(mob);
             return;

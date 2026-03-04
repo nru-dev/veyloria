@@ -11,7 +11,7 @@ import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.fml.common.Mod;
 import net.neoforged.neoforge.common.NeoForge;
-import net.neoforged.neoforge.event.server.ServerStartingEvent;
+import net.neoforged.neoforge.event.server.ServerAboutToStartEvent;
 import org.slf4j.Logger;
 
 @Mod(VeyloriaConstants.MOD_ID)
@@ -31,7 +31,7 @@ public final class VeyloriaMod {
         }
 
         @SubscribeEvent
-        public static void onServerStarting(ServerStartingEvent event) {
+        public static void onServerAboutToStart(ServerAboutToStartEvent event) {
             ConfigService configService = new ConfigService();
             VeyloriaServerRuntime.instance().initialize(configService.loadServerConfig(), configService.loadRatesConfig());
             VeyloriaServerRuntime.instance().testWorldLayoutService().onServerStarting(event.getServer());
