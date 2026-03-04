@@ -1,12 +1,16 @@
 package dev.laakirun.veyloria.server.game;
 
+import net.minecraft.ChatFormatting;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import com.mojang.brigadier.arguments.DoubleArgumentType;
 import dev.laakirun.veyloria.common.item.RpgItemData;
 import dev.laakirun.veyloria.common.model.BaseStats;
 import dev.laakirun.veyloria.common.model.CharacterProfile;
+import dev.laakirun.veyloria.common.model.EquipSlot;
 import dev.laakirun.veyloria.common.model.HostilityType;
+import dev.laakirun.veyloria.common.model.ItemCategory;
+import dev.laakirun.veyloria.common.model.Rarity;
 import dev.laakirun.veyloria.common.config.RatesConfig;
 import dev.laakirun.veyloria.server.VeyloriaServerRuntime;
 import dev.laakirun.veyloria.server.content.MobSpawnGroup;
@@ -22,8 +26,10 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ThreadLocalRandom;
 import net.minecraft.commands.Commands;
 import net.minecraft.commands.CommandSourceStack;
+import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.network.chat.Component;
+import net.minecraft.nbt.CompoundTag;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
@@ -34,8 +40,11 @@ import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.ai.attributes.Attributes;
+import net.minecraft.world.entity.decoration.ArmorStand;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
+import net.minecraft.world.item.component.CustomData;
 import net.minecraft.world.level.GameType;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
@@ -45,6 +54,7 @@ import net.neoforged.neoforge.event.RegisterCommandsEvent;
 import net.neoforged.neoforge.event.level.BlockEvent;
 import net.neoforged.neoforge.event.entity.living.LivingDeathEvent;
 import net.neoforged.neoforge.event.entity.living.LivingIncomingDamageEvent;
+import net.neoforged.neoforge.event.entity.living.LivingKnockBackEvent;
 import net.neoforged.neoforge.event.entity.EntityJoinLevelEvent;
 import net.neoforged.neoforge.event.entity.player.AttackEntityEvent;
 import net.neoforged.neoforge.event.entity.player.PlayerEvent;
@@ -60,11 +70,19 @@ public final class VeyloriaServerEvents {
     private static final long PROFILE_SYNC_INTERVAL_TICKS = 20L;
     private static final double BARS_VIEW_DISTANCE_SQR = 96.0D * 96.0D;
     private static final long BARS_HEARTBEAT_TICKS = 40L;
+    private static final String TAG_TEST_SWORD_GRANTED = "veyloria_test_sword_granted";
+    private static final long DAMAGE_TEXT_LIFETIME_TICKS = 20L;
+    private static final double CRIT_BASE_CHANCE = 0.05D;
+    private static final double CRIT_PER_AGILITY = 0.0035D;
+    private static final double CRIT_MAX_CHANCE = 0.55D;
+    private static final double CRIT_MULTIPLIER = 1.80D;
+    private static final double CRIT_SWORD_BONUS = 0.10D;
     private final java.util.Map<UUID, Long> lastPlayerAttackTick = new ConcurrentHashMap<>();
     private final java.util.Map<UUID, Long> lastSkillUseTick = new ConcurrentHashMap<>();
     private final java.util.Map<UUID, Double> manaByPlayer = new ConcurrentHashMap<>();
     private final java.util.Map<UUID, HealingPool> activeHealingPools = new ConcurrentHashMap<>();
     private final java.util.Map<BarsPairKey, BarsCacheEntry> barCacheByViewerSubject = new ConcurrentHashMap<>();
+    private final java.util.Map<UUID, DamageTextState> damageTextById = new ConcurrentHashMap<>();
 
     private long lastSpawnTick;
     private long lastProfileTick;
@@ -123,6 +141,7 @@ public final class VeyloriaServerEvents {
             profile = runtime.characterService().loadOrCreate(account);
         }
         runtime.testWorldLayoutService().ensureStarterSpawn(player);
+        grantBestTestSword(player);
         syncPlayerHud(player, profile);
     }
 
@@ -152,6 +171,7 @@ public final class VeyloriaServerEvents {
         manaByPlayer.clear();
         activeHealingPools.clear();
         barCacheByViewerSubject.clear();
+        damageTextById.clear();
     }
 
     @SubscribeEvent
@@ -182,6 +202,7 @@ public final class VeyloriaServerEvents {
             }
         }
         tickManaAndHealingPools(event.getServer(), gameTime);
+        tickDamageTexts(event.getServer(), gameTime);
         if (shouldSyncProfile) {
             broadcastPlayerBars(event.getServer(), gameTime);
             lastProfileTick = gameTime;
@@ -202,6 +223,8 @@ public final class VeyloriaServerEvents {
         }
         MobSpawnService spawnService = VeyloriaServerRuntime.instance().mobSpawnService();
         if (spawnService == null) {
+            event.setCanceled(true);
+            mob.discard();
             return;
         }
         if (spawnService.isManagedMob(mob)) {
@@ -272,19 +295,21 @@ public final class VeyloriaServerEvents {
         }
         BaseStatsSnapshot stats = snapshotStats(player, profile);
         RpgItemData weapon = RpgItemUtils.read(player.getMainHandItem());
-        double damage = computePlayerDamageByWeapon(profile.level(), stats, weapon);
+        double baseDamage = computePlayerDamageByWeapon(profile.level(), stats, weapon);
+        DamageRoll roll = rollDamage(stats, weapon, baseDamage);
         DamageSource damageSource = player.damageSources().playerAttack(player);
         Vec3 velocityBeforeHit = target.getDeltaMovement();
-        boolean applied = target.hurt(damageSource, (float) damage);
+        boolean applied = target.hurt(damageSource, (float) roll.damage());
         target.setDeltaMovement(velocityBeforeHit);
         if (!applied) {
             return;
         }
         lastPlayerAttackTick.put(player.getUUID(), gameTime);
         if (player.level() instanceof ServerLevel level) {
-            double threat = damage * threatModifier(weapon);
+            showDamageNumber(level, target, roll.damage(), roll.critical());
+            double threat = roll.damage() * threatModifier(weapon);
             VeyloriaServerRuntime.instance().mobSpawnService().recordHit(level, target.getUUID(), player.getUUID(), gameTime, threat);
-            applyMeleeSpecials(level, player, target, weapon, damageSource, damage, gameTime);
+            applyMeleeSpecials(level, player, target, weapon, damageSource, roll.damage(), gameTime);
         }
         if (template.hostilityType() == HostilityType.NEUTRAL) {
             VeyloriaServerRuntime.instance().mobSpawnService().markNeutralAggro(target.getUUID(), player.getUUID(), gameTime);
@@ -292,8 +317,8 @@ public final class VeyloriaServerEvents {
                 mob.setTarget(player);
             }
         }
-        COMBAT_LOGGER.debug("Player {} dealt {} to mob {} ({})", player.getGameProfile().getName(),
-            Math.round(damage * 100.0D) / 100.0D, target.getUUID(), template.code());
+        COMBAT_LOGGER.debug("Player {} dealt {}{} to mob {} ({})", player.getGameProfile().getName(),
+            Math.round(roll.damage() * 100.0D) / 100.0D, roll.critical() ? " (crit)" : "", target.getUUID(), template.code());
     }
 
     @SubscribeEvent
@@ -303,6 +328,18 @@ public final class VeyloriaServerEvents {
         MobTemplate targetTemplate = VeyloriaServerRuntime.instance().mobSpawnService().template(event.getEntity().getUUID());
         if (targetTemplate != null && event.getEntity().level() instanceof ServerLevel level
             && VeyloriaServerRuntime.instance().mobSpawnService().isEvading(event.getEntity().getUUID(), level.getGameTime())) {
+            event.setCanceled(true);
+            return;
+        }
+
+        if (targetTemplate != null
+            && targetTemplate.hostilityType() == HostilityType.HOSTILE
+            && sourceEntity == null
+            && VeyloriaServerRuntime.instance().mobSpawnService().isDaylightBurnScenario(event.getEntity())
+            && isFireTickDamage(event.getSource().getMsgId())) {
+            if (event.getEntity() instanceof Mob mob && mob.getRemainingFireTicks() > 0) {
+                mob.setRemainingFireTicks(0);
+            }
             event.setCanceled(true);
             return;
         }
@@ -353,6 +390,25 @@ public final class VeyloriaServerEvents {
                 }
             }
         }
+    }
+
+    @SubscribeEvent
+    public void onLivingKnockback(LivingKnockBackEvent event) {
+        if (!(event.getEntity() instanceof ServerPlayer player)) {
+            return;
+        }
+        DamageSource recentSource = player.getLastDamageSource();
+        Entity attacker = recentSource == null ? null : recentSource.getEntity();
+        if (attacker == null) {
+            return;
+        }
+        MobTemplate sourceTemplate = VeyloriaServerRuntime.instance().mobSpawnService().template(attacker.getUUID());
+        if (sourceTemplate == null || sourceTemplate.hostilityType() != HostilityType.HOSTILE) {
+            return;
+        }
+        event.setStrength(0.0F);
+        event.setRatioX(0.0D);
+        event.setRatioZ(0.0D);
     }
 
     @SubscribeEvent
@@ -680,6 +736,14 @@ public final class VeyloriaServerEvents {
         return player.hasPermissions(2);
     }
 
+    private static boolean isFireTickDamage(String messageId) {
+        if (messageId == null) {
+            return false;
+        }
+        String normalized = messageId.toLowerCase(Locale.ROOT);
+        return normalized.contains("onfire") || normalized.contains("infire") || normalized.equals("in_fire");
+    }
+
     private BaseStatsSnapshot snapshotStats(ServerPlayer player, CharacterProfile profile) {
         BaseStats stats = VeyloriaServerRuntime.instance().playerStatService().totalStats(player, profile);
         return new BaseStatsSnapshot(stats.power(), stats.vitality(), stats.armor(), stats.crit(), stats.haste());
@@ -726,6 +790,7 @@ public final class VeyloriaServerEvents {
             }
             double splash = baseDamage * splashFactor;
             if (mob.hurt(source, (float) splash)) {
+                showDamageNumber(level, mob, splash, false);
                 VeyloriaServerRuntime.instance().mobSpawnService().recordHit(level, mob.getUUID(), player.getUUID(), gameTime, splash * threatModifier(weapon));
                 applied++;
             }
@@ -737,6 +802,7 @@ public final class VeyloriaServerEvents {
                 level.sendParticles(ParticleTypes.END_ROD, primaryTarget.getX(), primaryTarget.getY() + 1.2D, primaryTarget.getZ(),
                     18, 0.8D, 0.5D, 0.8D, 0.02D);
                 if (primaryTarget.isAlive() && primaryTarget.hurt(source, (float) (baseDamage * 0.18D))) {
+                    showDamageNumber(level, primaryTarget, baseDamage * 0.18D, false);
                     VeyloriaServerRuntime.instance().mobSpawnService().recordHit(level, primaryTarget.getUUID(), player.getUUID(),
                         gameTime, baseDamage * 0.18D * threatModifier(weapon));
                 }
@@ -758,11 +824,13 @@ public final class VeyloriaServerEvents {
             return false;
         }
         DamageSource source = player.damageSources().playerAttack(player);
-        double damage = computePlayerDamageByWeapon(profile.level(), stats, weapon);
-        if (!target.hurt(source, (float) damage)) {
+        double baseDamage = computePlayerDamageByWeapon(profile.level(), stats, weapon);
+        DamageRoll roll = rollDamage(stats, weapon, baseDamage);
+        if (!target.hurt(source, (float) roll.damage())) {
             return false;
         }
-        VeyloriaServerRuntime.instance().mobSpawnService().recordHit(level, target.getUUID(), player.getUUID(), gameTime, damage);
+        showDamageNumber(level, target, roll.damage(), roll.critical());
+        VeyloriaServerRuntime.instance().mobSpawnService().recordHit(level, target.getUUID(), player.getUUID(), gameTime, roll.damage());
         spawnLineParticles(level, player.getEyePosition(), target.getEyePosition(), ParticleTypes.CRIT, 0.1D);
 
         if (weapon.aoeTargets() > 0 && ThreadLocalRandom.current().nextDouble() <= weapon.aoeChance()) {
@@ -776,8 +844,9 @@ public final class VeyloriaServerEvents {
                 if (hits >= Math.min(5, weapon.aoeTargets())) {
                     break;
                 }
-                double splash = damage * 0.45D;
+                double splash = roll.damage() * 0.45D;
                 if (mob.hurt(source, (float) splash)) {
+                    showDamageNumber(level, mob, splash, false);
                     VeyloriaServerRuntime.instance().mobSpawnService().recordHit(level, mob.getUUID(), player.getUUID(), gameTime, splash);
                     spawnLineParticles(level, target.getEyePosition(), mob.getEyePosition(), ParticleTypes.CRIT, 0.08D);
                     hits++;
@@ -795,8 +864,9 @@ public final class VeyloriaServerEvents {
                 if (chainedHits >= 2) {
                     break;
                 }
-                double chainDamage = damage * 0.30D;
+                double chainDamage = roll.damage() * 0.30D;
                 if (chainedTarget.hurt(source, (float) chainDamage)) {
+                    showDamageNumber(level, chainedTarget, chainDamage, false);
                     VeyloriaServerRuntime.instance().mobSpawnService().recordHit(level, chainedTarget.getUUID(), player.getUUID(), gameTime, chainDamage);
                     spawnLineParticles(level, target.getEyePosition(), chainedTarget.getEyePosition(), ParticleTypes.ELECTRIC_SPARK, 0.05D);
                     chainedHits++;
@@ -848,6 +918,124 @@ public final class VeyloriaServerEvents {
             }
         }
         return true;
+    }
+
+    private DamageRoll rollDamage(BaseStatsSnapshot stats, RpgItemData weapon, double baseDamage) {
+        double critChance = CRIT_BASE_CHANCE + stats.agility() * CRIT_PER_AGILITY;
+        if (weapon != null && "sword_2h".equals(weapon.weaponType())) {
+            critChance += CRIT_SWORD_BONUS;
+        }
+        critChance = Math.max(0.0D, Math.min(CRIT_MAX_CHANCE, critChance));
+        boolean critical = ThreadLocalRandom.current().nextDouble() < critChance;
+        double multiplier = critical ? CRIT_MULTIPLIER : 1.0D;
+        if (critical && weapon != null && weapon.legendaryEffect()) {
+            multiplier += 0.12D;
+        }
+        return new DamageRoll(baseDamage * multiplier, critical);
+    }
+
+    private void showDamageNumber(ServerLevel level, LivingEntity target, double damage, boolean critical) {
+        if (!target.isAlive() || damage <= 0.0D) {
+            return;
+        }
+        double baseX = target.getX() + ThreadLocalRandom.current().nextDouble(-0.30D, 0.30D);
+        double baseY = target.getY() + target.getBbHeight() + 0.45D;
+        double baseZ = target.getZ() + ThreadLocalRandom.current().nextDouble(-0.30D, 0.30D);
+        ArmorStand marker = new ArmorStand(level, baseX, baseY, baseZ);
+        marker.setSilent(true);
+        marker.setInvulnerable(true);
+        marker.setInvisible(true);
+        marker.setNoGravity(true);
+        marker.setNoBasePlate(true);
+        marker.setCustomNameVisible(true);
+        int roundedDamage = Math.max(1, (int) Math.round(damage));
+        String text = critical ? "✦ " + roundedDamage : Integer.toString(roundedDamage);
+        marker.setCustomName(Component.literal(text).withStyle(critical ? ChatFormatting.GOLD : ChatFormatting.WHITE));
+        if (!level.addFreshEntity(marker)) {
+            return;
+        }
+        Vec3 velocity = new Vec3(
+            ThreadLocalRandom.current().nextDouble(-0.012D, 0.012D),
+            critical ? 0.080D : 0.062D,
+            ThreadLocalRandom.current().nextDouble(-0.012D, 0.012D)
+        );
+        damageTextById.put(marker.getUUID(), new DamageTextState(
+            level.dimension().location().toString(),
+            level.getGameTime() + DAMAGE_TEXT_LIFETIME_TICKS,
+            velocity
+        ));
+    }
+
+    private void tickDamageTexts(MinecraftServer server, long gameTime) {
+        for (Map.Entry<UUID, DamageTextState> entry : new java.util.ArrayList<>(damageTextById.entrySet())) {
+            DamageTextState state = entry.getValue();
+            ServerLevel level = findLevel(server, state.dimension());
+            if (level == null || gameTime >= state.expiresAtTick()) {
+                removeDamageText(level, entry.getKey());
+                continue;
+            }
+            Entity raw = level.getEntity(entry.getKey());
+            if (!(raw instanceof ArmorStand marker) || !marker.isAlive()) {
+                damageTextById.remove(entry.getKey());
+                continue;
+            }
+            Vec3 velocity = state.velocity();
+            Vec3 nextPos = marker.position().add(velocity);
+            marker.teleportTo(nextPos.x, nextPos.y, nextPos.z);
+            Vec3 damped = new Vec3(velocity.x * 0.86D, Math.max(0.018D, velocity.y * 0.88D), velocity.z * 0.86D);
+            damageTextById.put(entry.getKey(), state.withVelocity(damped));
+        }
+    }
+
+    private void removeDamageText(ServerLevel level, UUID entityUuid) {
+        if (level != null) {
+            Entity raw = level.getEntity(entityUuid);
+            if (raw != null) {
+                raw.discard();
+            }
+        }
+        damageTextById.remove(entityUuid);
+    }
+
+    private void grantBestTestSword(ServerPlayer player) {
+        if (player.getPersistentData().getBoolean(TAG_TEST_SWORD_GRANTED)) {
+            return;
+        }
+        ItemStack sword = createBestTestSword();
+        if (!player.getInventory().add(sword)) {
+            player.drop(sword, false);
+        }
+        player.getPersistentData().putBoolean(TAG_TEST_SWORD_GRANTED, true);
+    }
+
+    private ItemStack createBestTestSword() {
+        ItemStack stack = new ItemStack(Items.NETHERITE_SWORD);
+        BaseStats stats = new BaseStats(230, 165, 60, 90, 0);
+        RpgItemData data = new RpgItemData(
+            "test_best_sword",
+            ItemCategory.EQUIPMENT,
+            Rarity.LEGENDARY,
+            1,
+            EquipSlot.WEAPON,
+            stats,
+            "sword_2h",
+            true,
+            0.62D,
+            5,
+            0.0D,
+            0,
+            0,
+            false,
+            true,
+            false,
+            80,
+            "Клинок Северного Завета"
+        );
+        CompoundTag root = new CompoundTag();
+        root.put(RpgItemData.ROOT_KEY, data.toTag());
+        CustomData.set(DataComponents.CUSTOM_DATA, stack, root);
+        stack.set(DataComponents.CUSTOM_NAME, Component.literal(data.fantasyName()).withStyle(ChatFormatting.GOLD));
+        return stack;
     }
 
     private Mob findHostileTarget(ServerPlayer player, double homingChance) {
@@ -1178,6 +1366,9 @@ public final class VeyloriaServerEvents {
     private record BaseStatsSnapshot(int strength, int stamina, int armor, int agility, int intellect) {
     }
 
+    private record DamageRoll(double damage, boolean critical) {
+    }
+
     private record BarsPayload(int hp, int hpMax, int mana, int manaMax) {
     }
 
@@ -1188,6 +1379,12 @@ public final class VeyloriaServerEvents {
     }
 
     private record BarsCacheEntry(BarsPayload payload, long lastSentTick) {
+    }
+
+    private record DamageTextState(String dimension, long expiresAtTick, Vec3 velocity) {
+        DamageTextState withVelocity(Vec3 velocity) {
+            return new DamageTextState(dimension, expiresAtTick, velocity);
+        }
     }
 
     private record HealingPool(

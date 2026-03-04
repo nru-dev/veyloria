@@ -1,5 +1,6 @@
 package dev.laakirun.veyloria.server.game;
 
+import net.minecraft.ChatFormatting;
 import dev.laakirun.veyloria.common.model.HostilityType;
 import dev.laakirun.veyloria.common.model.MobType;
 import dev.laakirun.veyloria.server.VeyloriaServerRuntime;
@@ -35,14 +36,27 @@ import org.slf4j.LoggerFactory;
 public final class MobSpawnService {
     private static final Logger LOGGER = LoggerFactory.getLogger("veyloria.spawn");
     private static final long NEUTRAL_RETALIATE_TICKS = 20L * 20L;
-    private static final long UNREACHABLE_EVADE_TICKS = 20L * 3L;
+    private static final long UNREACHABLE_EVADE_TICKS = 20L * 7L;
     private static final long EVADE_IMMUNITY_TICKS = 20L * 2L;
     private static final double COMBAT_MIN_DISTANCE = 1.8D;
     private static final double COMBAT_MAX_DISTANCE = 2.8D;
     private static final double COMBAT_RETREAT_STEP = 1.4D;
+    private static final double LEASH_RADIUS_MULTIPLIER = 3.8D;
+    private static final double LEASH_MIN_RADIUS = 56.0D;
+    private static final double IDLE_ROAM_RADIUS_MULTIPLIER = 2.6D;
+    private static final double IDLE_ROAM_MIN_RADIUS = 30.0D;
+    private static final long NAMEPLATE_HEARTBEAT_TICKS = 20L;
+    private static final int NAMEPLATE_SEGMENTS = 12;
+    private static final int MIN_ACTIVE_MOBS_FLOOR = 340;
+    private static final double NORMAL_DENSITY_MULTIPLIER = 2.4D;
+    private static final double NORMAL_PACK_MULTIPLIER = 2.0D;
+    private static final double MIN_INTER_MOB_DISTANCE = 3.3D;
     private static final String TAG_CUSTOM_MOB = "veyloria_custom_mob";
     private static final String TAG_TEMPLATE_ID = "veyloria_template_id";
     private static final String TAG_SPAWN_GROUP_ID = "veyloria_spawn_group_id";
+    private static final String TAG_SPAWN_X = "veyloria_spawn_x";
+    private static final String TAG_SPAWN_Y = "veyloria_spawn_y";
+    private static final String TAG_SPAWN_Z = "veyloria_spawn_z";
 
     private final Random random = new Random();
     private final Map<UUID, MobInstance> trackedMobs = new ConcurrentHashMap<>();
@@ -52,6 +66,7 @@ public final class MobSpawnService {
     private final Map<UUID, Long> evadingUntilTick = new ConcurrentHashMap<>();
     private final Map<String, Map<Long, List<MobSpawnGroup>>> spawnIndexByDimensionChunk = new ConcurrentHashMap<>();
     private final Map<String, Boolean> startupRareSpawnsDone = new ConcurrentHashMap<>();
+    private final Map<UUID, NameplateState> nameplateStateByMob = new ConcurrentHashMap<>();
     private List<MobSpawnGroup> indexedGroupsSnapshot = List.of();
 
     public void tick(MinecraftServer server) {
@@ -59,7 +74,7 @@ public final class MobSpawnService {
         long gameTime = server.overworld().getGameTime();
         clearExpiredNeutralAggro(gameTime);
         VeyloriaServerRuntime runtime = VeyloriaServerRuntime.instance();
-        int maxActivePerDimension = runtime.serverConfig().maxActiveMobsPerDimension();
+        int maxActivePerDimension = Math.max(runtime.serverConfig().maxActiveMobsPerDimension(), MIN_ACTIVE_MOBS_FLOOR);
         double activationRadius = runtime.serverConfig().spawnActivationRadius();
         double activationRadiusSqr = activationRadius * activationRadius;
 
@@ -70,6 +85,7 @@ public final class MobSpawnService {
             spawnRareGroupsOnStartup(level, gameTime, aliveByGroup);
             updateHostilityTargets(level, gameTime);
             maintainCombatDistance(level, gameTime);
+            performIdleRoaming(level, gameTime);
             enforceLeashes(level);
 
             if (authenticatedPlayers.isEmpty()) {
@@ -81,6 +97,10 @@ public final class MobSpawnService {
                 if (activeInDimension >= maxActivePerDimension) {
                     break;
                 }
+                MobTemplate template = runtime.contentService().mobTemplate(group.mobTemplateId());
+                if (template == null) {
+                    continue;
+                }
                 if (!hasAuthenticatedPlayersNearby(authenticatedPlayers, group, activationRadiusSqr)) {
                     continue;
                 }
@@ -89,10 +109,12 @@ public final class MobSpawnService {
                     continue;
                 }
                 int alive = aliveByGroup.getOrDefault(group.id(), 0);
-                if (alive >= group.minAlive()) {
+                int targetMinAlive = desiredMinAlive(group, template);
+                int targetMaxAlive = desiredMaxAlive(group, template);
+                if (alive >= targetMinAlive) {
                     continue;
                 }
-                int missing = Math.min(group.maxAlive() - alive, rollPackSize(group));
+                int missing = Math.min(Math.max(0, targetMaxAlive - alive), rollPackSize(group, template));
                 if (missing <= 0) {
                     continue;
                 }
@@ -102,7 +124,6 @@ public final class MobSpawnService {
                 }
                 activeInDimension += spawned;
                 aliveByGroup.merge(group.id(), spawned, Integer::sum);
-                MobTemplate template = runtime.contentService().mobTemplate(group.mobTemplateId());
                 nextSpawnTickByGroup.put(group.id(), gameTime + adjustedRespawnTicks(group, template));
                 LOGGER.debug("Spawned {} mobs in group {} ({}) at {}", spawned, group.id(),
                     template == null ? "unknown_template" : template.code(), level.dimension().location());
@@ -127,6 +148,7 @@ public final class MobSpawnService {
         if (templateId <= 0 || spawnGroupId <= 0) {
             return;
         }
+        ensureSpawnAnchorTag(mob);
         trackedMobs.putIfAbsent(mob.getUUID(), new MobInstance(mob.getUUID(), templateId, spawnGroupId));
     }
 
@@ -163,6 +185,7 @@ public final class MobSpawnService {
         neutralAggro.remove(entityUuid);
         blockedAttackSinceTick.remove(entityUuid);
         evadingUntilTick.remove(entityUuid);
+        nameplateStateByMob.remove(entityUuid);
         return trackedMobs.remove(entityUuid);
     }
 
@@ -295,6 +318,7 @@ public final class MobSpawnService {
             neutralAggro.remove(mobUuid);
             blockedAttackSinceTick.remove(mobUuid);
             evadingUntilTick.remove(mobUuid);
+            nameplateStateByMob.remove(mobUuid);
         }
     }
 
@@ -322,11 +346,34 @@ public final class MobSpawnService {
         LOGGER.info("Indexed {} spawn groups for {} dimensions", groups.size(), spawnIndexByDimensionChunk.size());
     }
 
-    private int rollPackSize(MobSpawnGroup group) {
+    private int rollPackSize(MobSpawnGroup group, MobTemplate template) {
         if (group.packSizeMax() <= group.packSizeMin()) {
-            return group.packSizeMin();
+            return scaledPackSize(group.packSizeMin(), template);
         }
-        return group.packSizeMin() + random.nextInt(group.packSizeMax() - group.packSizeMin() + 1);
+        int rolled = group.packSizeMin() + random.nextInt(group.packSizeMax() - group.packSizeMin() + 1);
+        return scaledPackSize(rolled, template);
+    }
+
+    private int scaledPackSize(int value, MobTemplate template) {
+        if (template.mobType() != MobType.NORMAL) {
+            return Math.max(1, value);
+        }
+        return Math.max(1, (int) Math.ceil(value * NORMAL_PACK_MULTIPLIER));
+    }
+
+    private int desiredMinAlive(MobSpawnGroup group, MobTemplate template) {
+        if (template.mobType() != MobType.NORMAL) {
+            return group.minAlive();
+        }
+        return Math.max(group.minAlive(), (int) Math.ceil(group.minAlive() * NORMAL_DENSITY_MULTIPLIER));
+    }
+
+    private int desiredMaxAlive(MobSpawnGroup group, MobTemplate template) {
+        if (template.mobType() != MobType.NORMAL) {
+            return group.maxAlive();
+        }
+        int scaled = Math.max(group.maxAlive(), (int) Math.ceil(group.maxAlive() * NORMAL_DENSITY_MULTIPLIER));
+        return Math.max(desiredMinAlive(group, template), scaled);
     }
 
     private double rollPackSpread(MobSpawnGroup group) {
@@ -377,33 +424,47 @@ public final class MobSpawnService {
             if (!(entityType.create(level) instanceof Mob mob)) {
                 continue;
             }
-            double x = packCenterX;
-            double z = packCenterZ;
-            if (index > 0) {
-                boolean resolved = false;
-                for (int attempt = 0; attempt < 8; attempt++) {
+            Double spawnX = null;
+            Double spawnY = null;
+            Double spawnZ = null;
+            for (int attempt = 0; attempt < 12; attempt++) {
+                double candidateX;
+                double candidateZ;
+                if (index == 0 && attempt == 0) {
+                    candidateX = packCenterX;
+                    candidateZ = packCenterZ;
+                } else {
                     double angle = random.nextDouble() * Math.PI * 2.0D;
-                    double spread = rollPackSpread(group);
-                    double candidateX = clamp(packCenterX + Math.cos(angle) * spread,
+                    double spreadBase = Math.max(3.0D, rollPackSpread(group));
+                    double spread = spreadBase * (0.55D + random.nextDouble());
+                    candidateX = clamp(packCenterX + Math.cos(angle) * spread,
                         group.centerX() - group.radiusX(), group.centerX() + group.radiusX());
-                    double candidateZ = clamp(packCenterZ + Math.sin(angle) * spread,
+                    candidateZ = clamp(packCenterZ + Math.sin(angle) * spread,
                         group.centerZ() - group.radiusZ(), group.centerZ() + group.radiusZ());
-                    if (!isAllowedSpawnPosition(group, candidateX, candidateZ)) {
-                        continue;
-                    }
-                    x = candidateX;
-                    z = candidateZ;
-                    resolved = true;
-                    break;
                 }
-                if (!resolved && !isAllowedSpawnPosition(group, x, z)) {
+                if (!isAllowedSpawnPosition(group, candidateX, candidateZ)) {
                     continue;
                 }
+                BlockPos pos = level.getHeightmapPos(net.minecraft.world.level.levelgen.Heightmap.Types.MOTION_BLOCKING_NO_LEAVES,
+                    BlockPos.containing(candidateX, group.centerY(), candidateZ));
+                double resolvedX = pos.getX() + 0.5D;
+                double resolvedY = pos.getY();
+                double resolvedZ = pos.getZ() + 0.5D;
+                if (isTooCloseToManagedMob(level, resolvedX, resolvedY, resolvedZ, MIN_INTER_MOB_DISTANCE)) {
+                    continue;
+                }
+                spawnX = resolvedX;
+                spawnY = resolvedY;
+                spawnZ = resolvedZ;
+                break;
             }
-            BlockPos pos = level.getHeightmapPos(net.minecraft.world.level.levelgen.Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, BlockPos.containing(x, group.centerY(), z));
-            mob.moveTo(pos.getX() + 0.5D, pos.getY(), pos.getZ() + 0.5D, random.nextFloat() * 360.0F, 0.0F);
+            if (spawnX == null || spawnY == null || spawnZ == null) {
+                continue;
+            }
+            mob.moveTo(spawnX, spawnY, spawnZ, random.nextFloat() * 360.0F, 0.0F);
             applyTemplate(mob, template);
-            markManagedMob(mob, template.id(), group.id());
+            suppressDaylightBurn(level, mob, template);
+            markManagedMob(mob, template.id(), group.id(), spawnX, spawnY, spawnZ);
             if (level.addFreshEntity(mob)) {
                 trackedMobs.put(mob.getUUID(), new MobInstance(mob.getUUID(), template.id(), group.id()));
                 spawned++;
@@ -453,15 +514,7 @@ public final class MobSpawnService {
         mob.setHealth((float) maxHealth);
         mob.setPersistenceRequired();
         mob.setCustomNameVisible(true);
-        mob.setCustomName(Component.literal(formatName(template)));
-    }
-
-    private String formatName(MobTemplate template) {
-        return "[" + template.level() + "] " + switch (template.mobType()) {
-            case NORMAL -> template.name();
-            case ELITE -> "Элитный " + template.name();
-            case BOSS -> "Босс " + template.name();
-        };
+        mob.setCustomName(buildNameplate(template, (int) Math.ceil(maxHealth), (int) Math.ceil(maxHealth)));
     }
 
     private void updateHostilityTargets(ServerLevel level, long gameTick) {
@@ -510,6 +563,8 @@ public final class MobSpawnService {
                     }
                 }
             }
+            suppressDaylightBurn(level, mob, template);
+            updateNameplate(mob, template, gameTick);
         }
     }
 
@@ -563,10 +618,12 @@ public final class MobSpawnService {
             if (template.leashRadius() <= 0.0D) {
                 continue;
             }
-            if (mob.distanceToSqr(group.centerX(), group.centerY(), group.centerZ()) <= template.leashRadius() * template.leashRadius()) {
+            Vec3 anchor = spawnAnchor(mob, group);
+            double leashRadius = Math.max(LEASH_MIN_RADIUS, template.leashRadius() * LEASH_RADIUS_MULTIPLIER);
+            if (mob.distanceToSqr(anchor) <= leashRadius * leashRadius) {
                 continue;
             }
-            triggerEvade(level, mob, entry.getValue(), group, level.getGameTime(), "leash");
+            triggerEvade(level, mob, entry.getValue(), group, anchor, level.getGameTime(), "leash");
         }
     }
 
@@ -601,8 +658,10 @@ public final class MobSpawnService {
             }
 
             boolean hasLineOfSight = mob.hasLineOfSight(target);
-            boolean inAttackRange = distance >= COMBAT_MIN_DISTANCE && distance <= COMBAT_MAX_DISTANCE;
-            boolean blocked = !hasLineOfSight || (!inAttackRange && !hasPath);
+            if (!hasLineOfSight && distance > COMBAT_MIN_DISTANCE) {
+                mob.getNavigation().moveTo(target, 1.05D);
+            }
+            boolean blocked = distance > COMBAT_MAX_DISTANCE && !hasPath;
             if (!blocked) {
                 blockedAttackSinceTick.remove(entry.getKey());
                 continue;
@@ -616,13 +675,61 @@ public final class MobSpawnService {
                 blockedAttackSinceTick.remove(entry.getKey());
                 continue;
             }
-            triggerEvade(level, mob, entry.getValue(), group, gameTick, "unreachable");
+            triggerEvade(level, mob, entry.getValue(), group, spawnAnchor(mob, group), gameTick, "unreachable");
         }
     }
 
-    private void triggerEvade(ServerLevel level, Mob mob, MobInstance instance, MobSpawnGroup group, long gameTick, String reason) {
+    private void performIdleRoaming(ServerLevel level, long gameTick) {
+        for (Map.Entry<UUID, MobInstance> entry : trackedMobs.entrySet()) {
+            Entity raw = level.getEntity(entry.getKey());
+            if (!(raw instanceof Mob mob) || !mob.isAlive()) {
+                continue;
+            }
+            if (mob.getTarget() != null || isEvading(mob.getUUID(), gameTick)) {
+                continue;
+            }
+            MobTemplate template = VeyloriaServerRuntime.instance().contentService().mobTemplate(entry.getValue().templateId());
+            MobSpawnGroup group = VeyloriaServerRuntime.instance().contentService().spawnGroup(entry.getValue().spawnGroupId());
+            if (template == null || group == null) {
+                continue;
+            }
+            int cadence = switch (template.hostilityType()) {
+                case HOSTILE -> 22;
+                case NEUTRAL -> 34;
+                case FRIENDLY -> 46;
+            };
+            int jitter = Math.floorMod(mob.getUUID().hashCode(), cadence);
+            if ((gameTick + jitter) % cadence != 0L) {
+                continue;
+            }
+            Vec3 anchor = spawnAnchor(mob, group);
+            double roamRadius = Math.max(IDLE_ROAM_MIN_RADIUS, template.leashRadius() * IDLE_ROAM_RADIUS_MULTIPLIER);
+            double roamSpeed = switch (template.hostilityType()) {
+                case HOSTILE -> 1.08D;
+                case NEUTRAL -> 1.00D;
+                case FRIENDLY -> 0.95D;
+            };
+            for (int attempt = 0; attempt < 10; attempt++) {
+                double angle = random.nextDouble() * Math.PI * 2.0D;
+                double distance = 8.0D + random.nextDouble() * roamRadius;
+                double targetX = anchor.x + Math.cos(angle) * distance;
+                double targetZ = anchor.z + Math.sin(angle) * distance;
+                if (!isAllowedSpawnPosition(group, targetX, targetZ)) {
+                    continue;
+                }
+                BlockPos targetPos = level.getHeightmapPos(net.minecraft.world.level.levelgen.Heightmap.Types.MOTION_BLOCKING_NO_LEAVES,
+                    BlockPos.containing(targetX, group.centerY(), targetZ));
+                if (!mob.getNavigation().moveTo(targetPos.getX() + 0.5D, targetPos.getY(), targetPos.getZ() + 0.5D, roamSpeed)) {
+                    continue;
+                }
+                break;
+            }
+        }
+    }
+
+    private void triggerEvade(ServerLevel level, Mob mob, MobInstance instance, MobSpawnGroup group, Vec3 anchor, long gameTick, String reason) {
         BlockPos resetPos = level.getHeightmapPos(net.minecraft.world.level.levelgen.Heightmap.Types.MOTION_BLOCKING_NO_LEAVES,
-            BlockPos.containing(group.centerX(), group.centerY(), group.centerZ()));
+            BlockPos.containing(anchor.x, anchor.y, anchor.z));
         mob.getNavigation().stop();
         mob.setTarget(null);
         mob.teleportTo(resetPos.getX() + 0.5D, resetPos.getY(), resetPos.getZ() + 0.5D);
@@ -688,10 +795,121 @@ public final class MobSpawnService {
         return group.minAlive() > 0 && group.maxAlive() == 1 && group.respawnSeconds() >= 600;
     }
 
-    private static void markManagedMob(Mob mob, long templateId, long spawnGroupId) {
+    private static void markManagedMob(Mob mob, long templateId, long spawnGroupId, double spawnX, double spawnY, double spawnZ) {
         mob.getPersistentData().putBoolean(TAG_CUSTOM_MOB, true);
         mob.getPersistentData().putLong(TAG_TEMPLATE_ID, templateId);
         mob.getPersistentData().putLong(TAG_SPAWN_GROUP_ID, spawnGroupId);
+        mob.getPersistentData().putDouble(TAG_SPAWN_X, spawnX);
+        mob.getPersistentData().putDouble(TAG_SPAWN_Y, spawnY);
+        mob.getPersistentData().putDouble(TAG_SPAWN_Z, spawnZ);
+    }
+
+    private static void ensureSpawnAnchorTag(Mob mob) {
+        if (mob.getPersistentData().contains(TAG_SPAWN_X)
+            && mob.getPersistentData().contains(TAG_SPAWN_Y)
+            && mob.getPersistentData().contains(TAG_SPAWN_Z)) {
+            return;
+        }
+        mob.getPersistentData().putDouble(TAG_SPAWN_X, mob.getX());
+        mob.getPersistentData().putDouble(TAG_SPAWN_Y, mob.getY());
+        mob.getPersistentData().putDouble(TAG_SPAWN_Z, mob.getZ());
+    }
+
+    private static Vec3 spawnAnchor(Mob mob, MobSpawnGroup group) {
+        ensureSpawnAnchorTag(mob);
+        return new Vec3(
+            mob.getPersistentData().getDouble(TAG_SPAWN_X),
+            mob.getPersistentData().getDouble(TAG_SPAWN_Y),
+            mob.getPersistentData().getDouble(TAG_SPAWN_Z)
+        );
+    }
+
+    private boolean isTooCloseToManagedMob(ServerLevel level, double x, double y, double z, double radius) {
+        AABB search = new AABB(x - radius, y - 1.5D, z - radius, x + radius, y + 2.5D, z + radius);
+        for (Mob other : level.getEntitiesOfClass(Mob.class, search, mob -> mob.isAlive() && isManagedMob(mob))) {
+            if (other.distanceToSqr(x, y, z) < radius * radius) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void updateNameplate(Mob mob, MobTemplate template, long gameTick) {
+        int hpMax = Math.max(1, (int) Math.ceil(mob.getMaxHealth()));
+        int hpCurrent = Math.max(0, (int) Math.ceil(mob.getHealth()));
+        int hpBucket = hpMax <= 0 ? 0 : (int) Math.round((hpCurrent / (double) hpMax) * NAMEPLATE_SEGMENTS);
+        NameplateState state = nameplateStateByMob.get(mob.getUUID());
+        if (state != null
+            && state.bucket() == hpBucket
+            && gameTick - state.lastTick() < NAMEPLATE_HEARTBEAT_TICKS) {
+            return;
+        }
+        mob.setCustomName(buildNameplate(template, hpCurrent, hpMax));
+        nameplateStateByMob.put(mob.getUUID(), new NameplateState(hpBucket, gameTick));
+    }
+
+    private static Component buildNameplate(MobTemplate template, int hpCurrent, int hpMax) {
+        ChatFormatting relationColor = switch (template.hostilityType()) {
+            case FRIENDLY -> ChatFormatting.GREEN;
+            case NEUTRAL -> ChatFormatting.YELLOW;
+            case HOSTILE -> ChatFormatting.RED;
+        };
+        String title = "[" + template.level() + "] " + switch (template.mobType()) {
+            case NORMAL -> template.name();
+            case ELITE -> "Элитный " + template.name();
+            case BOSS -> "Босс " + template.name();
+        };
+        int safeMax = Math.max(1, hpMax);
+        int filled = (int) Math.round((Math.max(0, hpCurrent) / (double) safeMax) * NAMEPLATE_SEGMENTS);
+        if (filled < 0) {
+            filled = 0;
+        } else if (filled > NAMEPLATE_SEGMENTS) {
+            filled = NAMEPLATE_SEGMENTS;
+        }
+        int empty = NAMEPLATE_SEGMENTS - filled;
+        Component hpBar = Component.literal("[").withStyle(ChatFormatting.DARK_GRAY)
+            .append(Component.literal("#".repeat(filled)).withStyle(ChatFormatting.RED))
+            .append(Component.literal("-".repeat(empty)).withStyle(ChatFormatting.DARK_GRAY))
+            .append(Component.literal("]").withStyle(ChatFormatting.DARK_GRAY))
+            .append(Component.literal(" " + Math.max(0, hpCurrent) + "/" + safeMax).withStyle(ChatFormatting.GRAY));
+        return Component.empty()
+            .append(Component.literal(title).withStyle(relationColor))
+            .append(Component.literal(" "))
+            .append(hpBar);
+    }
+
+    private static void suppressDaylightBurn(ServerLevel level, Mob mob, MobTemplate template) {
+        if (template.hostilityType() != HostilityType.HOSTILE) {
+            return;
+        }
+        if (!isDirectDaylight(level, mob)) {
+            return;
+        }
+        if (mob.getRemainingFireTicks() > 0) {
+            mob.setRemainingFireTicks(0);
+        }
+    }
+
+    public boolean isDaylightBurnScenario(Entity entity) {
+        if (!(entity instanceof Mob mob)) {
+            return false;
+        }
+        MobTemplate template = template(mob.getUUID());
+        if (template == null || template.hostilityType() != HostilityType.HOSTILE) {
+            return false;
+        }
+        if (!(mob.level() instanceof ServerLevel level)) {
+            return false;
+        }
+        return isDirectDaylight(level, mob);
+    }
+
+    private static boolean isDirectDaylight(ServerLevel level, Mob mob) {
+        if (!level.isDay()) {
+            return false;
+        }
+        BlockPos pos = BlockPos.containing(mob.getX(), mob.getEyeY(), mob.getZ());
+        return level.canSeeSky(pos);
     }
 
     private static boolean isAllowedSpawnPosition(MobSpawnGroup group, double x, double z) {
@@ -713,6 +931,9 @@ public final class MobSpawnService {
 
     private double randomInRange(double min, double max) {
         return min + random.nextDouble() * (max - min);
+    }
+
+    private record NameplateState(int bucket, long lastTick) {
     }
 
     private record AggroState(UUID targetUuid, long expiresAtTick) {
