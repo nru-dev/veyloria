@@ -16,6 +16,18 @@ public final class RpgItemData implements INBTSerializable<CompoundTag> {
     private int requiredLevel;
     private EquipSlot equipSlot;
     private BaseStats rolledStats = BaseStats.ZERO;
+    private String weaponType = "";
+    private boolean twoHanded;
+    private double aoeChance;
+    private int aoeTargets;
+    private double homingChance;
+    private int manaCost;
+    private int healPower;
+    private boolean aoeHealing;
+    private boolean legendaryEffect;
+    private boolean armorBoosted;
+    private int itemLevel;
+    private String fantasyName = "";
 
     public RpgItemData() {
     }
@@ -28,12 +40,48 @@ public final class RpgItemData implements INBTSerializable<CompoundTag> {
         EquipSlot equipSlot,
         BaseStats rolledStats
     ) {
+        this(templateCode, category, rarity, requiredLevel, equipSlot, rolledStats,
+            "", false, 0.0D, 0, 0.0D, 0, 0, false, false, false, requiredLevel, templateCode);
+    }
+
+    public RpgItemData(
+        String templateCode,
+        ItemCategory category,
+        Rarity rarity,
+        int requiredLevel,
+        EquipSlot equipSlot,
+        BaseStats rolledStats,
+        String weaponType,
+        boolean twoHanded,
+        double aoeChance,
+        int aoeTargets,
+        double homingChance,
+        int manaCost,
+        int healPower,
+        boolean aoeHealing,
+        boolean legendaryEffect,
+        boolean armorBoosted,
+        int itemLevel,
+        String fantasyName
+    ) {
         this.templateCode = templateCode;
         this.category = category;
         this.rarity = rarity;
         this.requiredLevel = requiredLevel;
         this.equipSlot = equipSlot;
         this.rolledStats = rolledStats;
+        this.weaponType = weaponType == null ? "" : weaponType;
+        this.twoHanded = twoHanded;
+        this.aoeChance = aoeChance;
+        this.aoeTargets = aoeTargets;
+        this.homingChance = homingChance;
+        this.manaCost = manaCost;
+        this.healPower = healPower;
+        this.aoeHealing = aoeHealing;
+        this.legendaryEffect = legendaryEffect;
+        this.armorBoosted = armorBoosted;
+        this.itemLevel = itemLevel;
+        this.fantasyName = fantasyName == null ? "" : fantasyName;
     }
 
     public String templateCode() {
@@ -60,6 +108,54 @@ public final class RpgItemData implements INBTSerializable<CompoundTag> {
         return rolledStats;
     }
 
+    public String weaponType() {
+        return weaponType;
+    }
+
+    public boolean twoHanded() {
+        return twoHanded;
+    }
+
+    public double aoeChance() {
+        return aoeChance;
+    }
+
+    public int aoeTargets() {
+        return aoeTargets;
+    }
+
+    public double homingChance() {
+        return homingChance;
+    }
+
+    public int manaCost() {
+        return manaCost;
+    }
+
+    public int healPower() {
+        return healPower;
+    }
+
+    public boolean aoeHealing() {
+        return aoeHealing;
+    }
+
+    public boolean legendaryEffect() {
+        return legendaryEffect;
+    }
+
+    public boolean armorBoosted() {
+        return armorBoosted;
+    }
+
+    public int itemLevel() {
+        return itemLevel;
+    }
+
+    public String fantasyName() {
+        return fantasyName;
+    }
+
     @Override
     public CompoundTag serializeNBT(HolderLookup.Provider provider) {
         return toTag();
@@ -79,6 +175,18 @@ public final class RpgItemData implements INBTSerializable<CompoundTag> {
         tag.putInt("armor", rolledStats.armor());
         tag.putInt("crit", rolledStats.crit());
         tag.putInt("haste", rolledStats.haste());
+        tag.putString("weaponType", weaponType);
+        tag.putBoolean("twoHanded", twoHanded);
+        tag.putDouble("aoeChance", aoeChance);
+        tag.putInt("aoeTargets", aoeTargets);
+        tag.putDouble("homingChance", homingChance);
+        tag.putInt("manaCost", manaCost);
+        tag.putInt("healPower", healPower);
+        tag.putBoolean("aoeHealing", aoeHealing);
+        tag.putBoolean("legendaryEffect", legendaryEffect);
+        tag.putBoolean("armorBoosted", armorBoosted);
+        tag.putInt("itemLevel", itemLevel);
+        tag.putString("fantasyName", fantasyName);
         return tag;
     }
 
@@ -100,6 +208,18 @@ public final class RpgItemData implements INBTSerializable<CompoundTag> {
             tag.getInt("crit"),
             tag.getInt("haste")
         );
+        weaponType = tag.getString("weaponType");
+        twoHanded = tag.getBoolean("twoHanded");
+        aoeChance = tag.contains("aoeChance") ? tag.getDouble("aoeChance") : 0.0D;
+        aoeTargets = tag.contains("aoeTargets") ? tag.getInt("aoeTargets") : 0;
+        homingChance = tag.contains("homingChance") ? tag.getDouble("homingChance") : 0.0D;
+        manaCost = tag.contains("manaCost") ? tag.getInt("manaCost") : 0;
+        healPower = tag.contains("healPower") ? tag.getInt("healPower") : 0;
+        aoeHealing = tag.getBoolean("aoeHealing");
+        legendaryEffect = tag.getBoolean("legendaryEffect");
+        armorBoosted = tag.getBoolean("armorBoosted");
+        itemLevel = tag.contains("itemLevel") ? tag.getInt("itemLevel") : requiredLevel;
+        fantasyName = tag.contains("fantasyName") ? tag.getString("fantasyName") : templateCode;
     }
 
     public static RpgItemData fromTag(CompoundTag tag) {

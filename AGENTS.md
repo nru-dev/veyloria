@@ -71,6 +71,24 @@
 - Хранение: SQLite + миграции + импорт seed-данных при старте сервера.
 - Цель MVP: рабочий вертикальный срез для кооперативного теста, не полноценная MMORPG.
 
+## Актуальный Функционал (для быстрого ознакомления)
+- Тестовый мир: 7 зон по северу (`1-10` ... `70-80`), дорога и безопасный коридор, разделители из белой шерсти.
+- Спавн только кастомных мобов; ванильный спавн мобов отключён.
+- Бой сервер-авторитетный: threat, evade, leash, party XP-share в рамках одной зоны.
+- Дроп экипировки серверный: уровни предметов, редкости, архетипы брони и 4 типа оружия.
+- Мана есть только у игроков, у которых в руках есть оружие, реально использующее ману (`manaCost > 0`).
+- Клиент показывает:
+  - нижний HUD (медь/мана/уведомления),
+  - надголовные бары игроков (`HP` + `MP`) в неймплейте.
+
+## Ключевые Точки Кода
+- Серверный runtime и сервисы: `src/main/java/dev/laakirun/veyloria/server`
+- Ключевая серверная игровая логика: `src/main/java/dev/laakirun/veyloria/server/game/VeyloriaServerEvents.java`
+- Спавн/поведение мобов: `src/main/java/dev/laakirun/veyloria/server/game/MobSpawnService.java`
+- Генерация дропа экипировки: `src/main/java/dev/laakirun/veyloria/server/game/GearDropService.java`
+- Клиентский HUD и маркеры: `src/main/java/dev/laakirun/veyloria/client/VeyloriaClientEvents.java`
+- Клиентское состояние интерфейса: `src/main/java/dev/laakirun/veyloria/client/VeyloriaClientState.java`
+
 ## Непереговорные Инженерные Правила
 - Сервер авторитетен для игровой логики. Клиент не источник истины.
 - Поддерживать data-driven подход (templates, loot, spawn groups, rates).

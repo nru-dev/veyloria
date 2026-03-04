@@ -2,6 +2,8 @@ package dev.laakirun.veyloria.client;
 
 import dev.laakirun.veyloria.common.VeyloriaConstants;
 import dev.laakirun.veyloria.common.item.RpgItemData;
+import java.util.UUID;
+import net.minecraft.ChatFormatting;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.screens.Screen;
@@ -9,12 +11,14 @@ import net.minecraft.core.component.DataComponents;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.component.CustomData;
+import net.minecraft.world.entity.player.Player;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.neoforge.client.event.ClientChatReceivedEvent;
 import net.neoforged.neoforge.client.event.ClientPlayerNetworkEvent;
 import net.neoforged.neoforge.client.event.ClientTickEvent;
+import net.neoforged.neoforge.client.event.RenderNameTagEvent;
 import net.neoforged.neoforge.client.event.RenderGuiLayerEvent;
 import net.neoforged.neoforge.client.gui.VanillaGuiLayers;
 import net.neoforged.neoforge.event.entity.player.ItemTooltipEvent;
@@ -66,11 +70,45 @@ public final class VeyloriaClientEvents {
             return;
         }
         RpgItemData itemData = RpgItemData.fromTag(data.copyTag().getCompound(RpgItemData.ROOT_KEY));
-        event.getToolTip().add(Component.literal("Rarity: " + itemData.rarity().name()));
-        event.getToolTip().add(Component.literal("Required Level: " + itemData.requiredLevel()));
-        event.getToolTip().add(Component.literal("Power: " + itemData.rolledStats().power()));
-        event.getToolTip().add(Component.literal("Vitality: " + itemData.rolledStats().vitality()));
-        event.getToolTip().add(Component.literal("Armor: " + itemData.rolledStats().armor()));
+        event.getToolTip().add(Component.literal("Редкость: " + rarityName(itemData)).withStyle(rarityColor(itemData)));
+        event.getToolTip().add(Component.literal("Требуемый уровень: " + itemData.requiredLevel()));
+        if (itemData.rolledStats().power() > 0) {
+            event.getToolTip().add(Component.literal("Сила: +" + itemData.rolledStats().power()).withStyle(ChatFormatting.RED));
+        }
+        if (itemData.rolledStats().vitality() > 0) {
+            event.getToolTip().add(Component.literal("Выносливость: +" + itemData.rolledStats().vitality()).withStyle(ChatFormatting.YELLOW));
+        }
+        if (itemData.rolledStats().crit() > 0) {
+            event.getToolTip().add(Component.literal("Ловкость: +" + itemData.rolledStats().crit()).withStyle(ChatFormatting.AQUA));
+        }
+        if (itemData.rolledStats().haste() > 0) {
+            event.getToolTip().add(Component.literal("Интеллект: +" + itemData.rolledStats().haste()).withStyle(ChatFormatting.LIGHT_PURPLE));
+        }
+        ChatFormatting armorColor = itemData.armorBoosted() ? ChatFormatting.GREEN : ChatFormatting.WHITE;
+        event.getToolTip().add(Component.literal("Броня: +" + itemData.rolledStats().armor()).withStyle(armorColor));
+        if (!itemData.weaponType().isBlank()) {
+            event.getToolTip().add(Component.literal("Тип оружия: " + weaponLabel(itemData.weaponType())));
+            if (itemData.aoeChance() > 0.0D && itemData.aoeTargets() > 0) {
+                int percent = (int) Math.round(itemData.aoeChance() * 100.0D);
+                event.getToolTip().add(Component.literal("Шанс АоЕ: " + percent + "%, целей: " + itemData.aoeTargets()).withStyle(ChatFormatting.GOLD));
+            }
+            if (itemData.homingChance() > 0.0D) {
+                int percent = (int) Math.round(itemData.homingChance() * 100.0D);
+                event.getToolTip().add(Component.literal("Самонаведение: " + percent + "%").withStyle(ChatFormatting.AQUA));
+            }
+            if (itemData.manaCost() > 0) {
+                event.getToolTip().add(Component.literal("Расход маны: " + itemData.manaCost()).withStyle(ChatFormatting.BLUE));
+            }
+            if (itemData.healPower() > 0) {
+                event.getToolTip().add(Component.literal("Сила исцеления: +" + itemData.healPower()).withStyle(ChatFormatting.GREEN));
+            }
+            if (itemData.aoeHealing()) {
+                event.getToolTip().add(Component.literal("Эффект: целительная лужа (10 сек)").withStyle(ChatFormatting.GREEN));
+            }
+        }
+        if (itemData.legendaryEffect()) {
+            event.getToolTip().add(Component.literal("Легендарный эффект активен").withStyle(ChatFormatting.GOLD));
+        }
     }
 
     @SubscribeEvent
@@ -85,12 +123,49 @@ public final class VeyloriaClientEvents {
         GuiGraphics guiGraphics = event.getGuiGraphics();
         int width = minecraft.getWindow().getGuiScaledWidth();
         int y = minecraft.getWindow().getGuiScaledHeight() - 42;
-        guiGraphics.drawString(minecraft.font, "Copper: " + VeyloriaClientState.instance().copper(), width - 88, y, 0xF0A040, false);
+        guiGraphics.drawString(minecraft.font, "Медь: " + VeyloriaClientState.instance().copper(), width - 96, y, 0xF0A040, false);
+        if (VeyloriaClientState.instance().manaMax() > 0) {
+            guiGraphics.drawString(minecraft.font,
+                "Мана: " + VeyloriaClientState.instance().mana() + "/" + VeyloriaClientState.instance().manaMax(),
+                width - 120, y - 10, 0x40A0F0, false);
+        }
         int index = 0;
         for (VeyloriaClientState.Notification notification : VeyloriaClientState.instance().notifications()) {
             guiGraphics.drawCenteredString(minecraft.font, notification.text(), width / 2, y - 14 - index * 10, 0xFFFFFF);
             index++;
         }
+    }
+
+    @SubscribeEvent
+    public static void onRenderNameTag(RenderNameTagEvent event) {
+        if (!(event.getEntity() instanceof Player player)) {
+            return;
+        }
+        Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft.player == null || minecraft.options.hideGui) {
+            return;
+        }
+        int hpCurrent = (int) Math.ceil(Math.max(0.0D, player.getHealth()));
+        int hpMax = (int) Math.ceil(Math.max(1.0D, player.getMaxHealth()));
+        int manaCurrent = 0;
+        int manaMax = 0;
+
+        VeyloriaClientState.ResourceBars bars = VeyloriaClientState.instance().playerBars(player.getUUID());
+        if (bars != null) {
+            hpCurrent = bars.health();
+            hpMax = bars.healthMax();
+            manaCurrent = bars.mana();
+            manaMax = bars.manaMax();
+        }
+
+        Component hpBar = buildBar("HP", hpCurrent, hpMax, 10, ChatFormatting.RED);
+        Component manaBar = buildBar("MP", manaCurrent, manaMax, 10, ChatFormatting.AQUA);
+        event.setContent(Component.empty()
+            .append(event.getOriginalContent())
+            .append(Component.literal("  "))
+            .append(hpBar)
+            .append(Component.literal("  "))
+            .append(manaBar));
     }
 
     private static void handleMarker(String marker) {
@@ -106,18 +181,33 @@ public final class VeyloriaClientEvents {
         }
         if (marker.startsWith("[veyloria:profile]")) {
             state.setCopper(parseInt(marker, "copper"));
+            state.setMana(parseInt(marker, "mana"), parseInt(marker, "manaMax"));
+            return;
+        }
+        if (marker.startsWith("[veyloria:bars]")) {
+            UUID playerUuid = parseUuid(marker, "uuid");
+            if (playerUuid != null) {
+                state.setPlayerBars(
+                    playerUuid,
+                    parseInt(marker, "hp"),
+                    parseInt(marker, "hpMax"),
+                    parseInt(marker, "mana"),
+                    parseInt(marker, "manaMax"),
+                    tickNow() + 60
+                );
+            }
             return;
         }
         if (marker.startsWith("[veyloria:gain]")) {
             int xp = parseInt(marker, "xp");
             int copper = parseInt(marker, "copper");
-            state.pushNotification("+" + xp + " EXP, +" + copper + " Copper", tickNow() + 60);
+            state.pushNotification("+" + xp + " опыта, +" + copper + " меди", tickNow() + 60);
             return;
         }
         if (marker.startsWith("[veyloria:loot]")) {
             String name = parseString(marker, "name");
             int quantity = parseInt(marker, "quantity");
-            state.pushNotification("Loot: " + name + " x" + quantity, tickNow() + 80);
+            state.pushNotification("Добыча: " + name + " x" + quantity, tickNow() + 80);
             return;
         }
         if (marker.startsWith("[veyloria:error]")) {
@@ -145,5 +235,79 @@ public final class VeyloriaClientEvents {
             }
         }
         return "";
+    }
+
+    private static UUID parseUuid(String marker, String key) {
+        String raw = parseString(marker, key);
+        if (raw.isBlank()) {
+            return null;
+        }
+        try {
+            return UUID.fromString(raw);
+        } catch (IllegalArgumentException exception) {
+            return null;
+        }
+    }
+
+    private static Component buildBar(String label, int current, int max, int segments, ChatFormatting fillColor) {
+        int safeSegments = Math.max(4, segments);
+        int safeMax = Math.max(0, max);
+        double ratio = safeMax <= 0 ? 0.0D : clamp01(current / (double) safeMax);
+        int filled = (int) Math.round(ratio * safeSegments);
+        if (filled < 0) {
+            filled = 0;
+        } else if (filled > safeSegments) {
+            filled = safeSegments;
+        }
+        int empty = safeSegments - filled;
+        Component fill = Component.literal("#".repeat(filled)).withStyle(fillColor);
+        Component gap = Component.literal("-".repeat(empty)).withStyle(ChatFormatting.DARK_GRAY);
+        Component values = Component.literal(" " + Math.max(0, current) + "/" + safeMax).withStyle(ChatFormatting.GRAY);
+        return Component.empty()
+            .append(Component.literal(label + "[").withStyle(ChatFormatting.GRAY))
+            .append(fill)
+            .append(gap)
+            .append(Component.literal("]").withStyle(ChatFormatting.GRAY))
+            .append(values);
+    }
+
+    private static double clamp01(double value) {
+        if (value < 0.0D) {
+            return 0.0D;
+        }
+        if (value > 1.0D) {
+            return 1.0D;
+        }
+        return value;
+    }
+
+    private static String rarityName(RpgItemData data) {
+        return switch (data.rarity()) {
+            case COMMON -> "Обычная";
+            case UNCOMMON -> "Необычная";
+            case RARE -> "Редкая";
+            case EPIC -> "Эпическая";
+            case LEGENDARY -> "Легендарная";
+        };
+    }
+
+    private static ChatFormatting rarityColor(RpgItemData data) {
+        return switch (data.rarity()) {
+            case COMMON -> ChatFormatting.WHITE;
+            case UNCOMMON -> ChatFormatting.GREEN;
+            case RARE -> ChatFormatting.BLUE;
+            case EPIC -> ChatFormatting.DARK_PURPLE;
+            case LEGENDARY -> ChatFormatting.GOLD;
+        };
+    }
+
+    private static String weaponLabel(String weaponType) {
+        return switch (weaponType) {
+            case "sword_2h" -> "Двуручный меч";
+            case "axe" -> "Топор защитника";
+            case "bow" -> "Лук";
+            case "wand" -> "Целительная палочка";
+            default -> weaponType;
+        };
     }
 }

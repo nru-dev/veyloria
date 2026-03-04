@@ -16,7 +16,15 @@ MVP RPG-мод для Minecraft `1.21.1` на `NeoForge`, где сервер х
 - серверный расчёт урона по мобам, серверное распределение EXP/валюты/персонального лута
 - учёт `hostility_type` в бою (friendly/neutral/hostile), применение `aggro_radius`, `leash_radius`, `pack_spread`
 - базовые кастомные предметы через vanilla item stacks + `CustomData`
-- клиентский HUD для copper и уведомлений, tooltip RPG-предметов
+- клиентский HUD для copper/маны и уведомлений, tooltip RPG-предметов
+- надголовные полоски ресурсов у игроков: `HP` + `MP` в одном неймплейте
+- тестовая world-layout схема: 7 северных зон `1-80`, дорога шириной 5 блоков, безопасная полоса 15 блоков, границы зон из белой шерсти
+- отключён ванильный спавн мобов (`doMobSpawning=false`) и запрещено появление некастомных мобов
+- seed-контент из ресурсов: 38 кастомных мобов, 93 spawn groups, 22 loot tables
+- дроп экипировки реализован серверно (редкости, уровни предметов, оружие/броня, спецэффекты)
+- мана активна только когда у игрока экипировано оружие, которое реально её использует (например, палочка); иначе `MP=0`
+- для не-OP игроков запрещены строительство/ломание блоков (Adventure + серверные блокировки)
+- добавлены команды: `/veyloria rates ...` (OP only, runtime-only) и `/party <nickname>` (для шаринга XP внутри зоны)
 
 ## Требования
 
@@ -43,6 +51,8 @@ MVP RPG-мод для Minecraft `1.21.1` на `NeoForge`, где сервер х
 .\gradlew.bat runClient
 ```
 
+> Если локальный мир уже был создан до перехода на superflat-пресет, удалите папку `run/world` и запустите сервер снова.
+
 4. При первом входе откроется окно авторизации.
 5. Зарегистрироваться новым паролем или войти существующим.
 
@@ -53,6 +63,14 @@ MVP RPG-мод для Minecraft `1.21.1` на `NeoForge`, где сервер х
 - БД: `data/veyloria/rpg.db`
 - миграции в ресурсах: `src/main/resources/data/veyloria/migrations`
 - seed-данные в ресурсах: `src/main/resources/data/veyloria/seeds`
+- layout и координаты тестовых зон: `docs/world-layout.md`
+
+## Runtime-команды
+
+- `OP`: `/veyloria rates show`
+- `OP`: `/veyloria rates set <xp|currency|resource|equipment|consumable|boss_respawn> <value>`
+- `OP`: `/veyloria rates reset`
+- `все игроки`: `/party <nickname>`
 
 ## Запуск с друзьями
 
@@ -65,5 +83,5 @@ MVP RPG-мод для Minecraft `1.21.1` на `NeoForge`, где сервер х
 ## Ограничения MVP
 
 - нет квестов, классов, талантов, PvP, аукциона, гильдий и инстансов
-- seed-контент MVP по-прежнему использует hostile-мобов, хотя runtime поддерживает friendly/neutral/hostile
+- кастомные постройки с `structure_id` и отдельными правилами спавна в локациях пока не активированы в runtime
 - runtime-проверка полного Minecraft-цикла в этой среде не автоматизирована; см. чеклист в `docs/manual-checklist.md`

@@ -34,6 +34,7 @@ public final class VeyloriaMod {
         public static void onServerStarting(ServerStartingEvent event) {
             ConfigService configService = new ConfigService();
             VeyloriaServerRuntime.instance().initialize(configService.loadServerConfig(), configService.loadRatesConfig());
+            VeyloriaServerRuntime.instance().testWorldLayoutService().onServerStarting(event.getServer());
         }
     }
 }

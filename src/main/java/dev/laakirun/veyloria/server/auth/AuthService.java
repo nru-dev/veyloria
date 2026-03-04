@@ -46,10 +46,10 @@ public final class AuthService {
 
     public AuthResult register(UUID minecraftUuid, String nickname, String password) {
         if (password == null || password.length() < 4) {
-            return AuthResult.failure("Password must be at least 4 characters");
+            return AuthResult.failure("Пароль должен быть не короче 4 символов");
         }
         if (findAccount(minecraftUuid).isPresent()) {
-            return AuthResult.failure("Account already exists");
+            return AuthResult.failure("Аккаунт уже существует");
         }
         try (Connection connection = databaseManager.connection();
              PreparedStatement statement = connection.prepareStatement("""
@@ -72,14 +72,14 @@ public final class AuthService {
     public AuthResult login(UUID minecraftUuid, String password, String nickname) {
         Optional<AccountRecord> optional = findAccount(minecraftUuid);
         if (optional.isEmpty()) {
-            return AuthResult.failure("Account not found");
+            return AuthResult.failure("Аккаунт не найден");
         }
         AccountRecord record = optional.get();
         if (!passwordHasher.verify(password, record.passwordHash())) {
-            return AuthResult.failure("Wrong password");
+            return AuthResult.failure("Неверный пароль");
         }
         if (sessionManager.hasActiveSession(record.id(), minecraftUuid)) {
-            return AuthResult.failure("Account already logged in");
+            return AuthResult.failure("Аккаунт уже находится в игре");
         }
         updateNickname(record.id(), nickname);
         AccountRecord updated = new AccountRecord(record.id(), record.minecraftUuid(), nickname, record.passwordHash());

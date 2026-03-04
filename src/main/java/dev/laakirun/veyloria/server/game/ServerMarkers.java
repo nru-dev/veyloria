@@ -3,6 +3,7 @@ package dev.laakirun.veyloria.server.game;
 import dev.laakirun.veyloria.common.model.CharacterProfile;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerPlayer;
+import java.util.UUID;
 
 public final class ServerMarkers {
     public static final String AUTH_REQUIRED = "[veyloria:auth_required]";
@@ -11,6 +12,7 @@ public final class ServerMarkers {
     public static final String GAIN = "[veyloria:gain]";
     public static final String LOOT = "[veyloria:loot]";
     public static final String ERROR = "[veyloria:error]";
+    public static final String BARS = "[veyloria:bars]";
 
     private ServerMarkers() {
     }
@@ -23,13 +25,15 @@ public final class ServerMarkers {
         player.sendSystemMessage(Component.literal(AUTH_OK));
     }
 
-    public static void sendProfile(ServerPlayer player, CharacterProfile profile, int xpToNextLevel) {
+    public static void sendProfile(ServerPlayer player, CharacterProfile profile, int xpToNextLevel, int manaCurrent, int manaMax) {
         player.sendSystemMessage(Component.literal(
             PROFILE +
                 "|level=" + profile.level() +
                 "|xpCurrent=" + profile.xpCurrent() +
                 "|xpNext=" + xpToNextLevel +
-                "|copper=" + profile.currencyCopper()
+                "|copper=" + profile.currencyCopper() +
+                "|mana=" + manaCurrent +
+                "|manaMax=" + manaMax
         ));
     }
 
@@ -43,5 +47,16 @@ public final class ServerMarkers {
 
     public static void sendError(ServerPlayer player, String message) {
         player.sendSystemMessage(Component.literal(ERROR + "|message=" + message));
+    }
+
+    public static void sendBars(ServerPlayer viewer, UUID subjectUuid, int hpCurrent, int hpMax, int manaCurrent, int manaMax) {
+        viewer.sendSystemMessage(Component.literal(
+            BARS +
+                "|uuid=" + subjectUuid +
+                "|hp=" + hpCurrent +
+                "|hpMax=" + hpMax +
+                "|mana=" + manaCurrent +
+                "|manaMax=" + manaMax
+        ));
     }
 }
