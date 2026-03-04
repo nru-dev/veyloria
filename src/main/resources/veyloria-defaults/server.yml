@@ -5,6 +5,22 @@ spawn_tick_interval: 20
 spawn_activation_radius: 224
 auth_lock_tick_interval: 1
 max_active_mobs_per_dimension: 520
+zone_density_multipliers:
+  zone_1: 1.20
+  zone_2: 1.30
+  zone_3: 1.40
+  zone_4: 1.55
+  zone_5: 1.70
+  zone_6: 1.85
+  zone_7: 2.00
+zone_pack_multipliers:
+  zone_1: 1.10
+  zone_2: 1.15
+  zone_3: 1.20
+  zone_4: 1.28
+  zone_5: 1.35
+  zone_6: 1.42
+  zone_7: 1.50
 combat:
   player_base_damage: 4.0
   player_base_health: 20.0

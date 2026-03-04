@@ -106,8 +106,16 @@ public final class VeyloriaClientEvents {
     }
 
     @SubscribeEvent
+    public static void onRenderHudPre(RenderGuiLayerEvent.Pre event) {
+        if (event.getName().equals(VanillaGuiLayers.EXPERIENCE_BAR)
+            || event.getName().equals(VanillaGuiLayers.EXPERIENCE_LEVEL)) {
+            event.setCanceled(true);
+        }
+    }
+
+    @SubscribeEvent
     public static void onRenderHud(RenderGuiLayerEvent.Post event) {
-        if (!event.getName().equals(VanillaGuiLayers.EXPERIENCE_LEVEL)) {
+        if (!event.getName().equals(VanillaGuiLayers.HOTBAR)) {
             return;
         }
         Minecraft minecraft = Minecraft.getInstance();
@@ -117,7 +125,11 @@ public final class VeyloriaClientEvents {
         GuiGraphics guiGraphics = event.getGuiGraphics();
         int width = minecraft.getWindow().getGuiScaledWidth();
         int height = minecraft.getWindow().getGuiScaledHeight();
-        int y = height - 42;
+        int barWidth = 182;
+        int barHeight = 8;
+        int barX = width / 2 - barWidth / 2;
+        int hpY = height - 52;
+        int manaY = hpY + 11;
         int hpCurrent = (int) Math.ceil(Math.max(0.0D, minecraft.player.getHealth()));
         int hpMax = (int) Math.ceil(Math.max(1.0D, minecraft.player.getMaxHealth()));
         VeyloriaClientState.ResourceBars selfBars = VeyloriaClientState.instance().playerBars(minecraft.player.getUUID());
@@ -125,23 +137,25 @@ public final class VeyloriaClientEvents {
             hpCurrent = selfBars.health();
             hpMax = selfBars.healthMax();
         }
-        guiGraphics.drawString(
-            minecraft.font,
-            "HP: " + hpCurrent + "/" + hpMax,
-            12,
-            height - 52,
-            0xFF4040,
-            false
-        );
-        guiGraphics.drawString(minecraft.font, "Медь: " + VeyloriaClientState.instance().copper(), width - 96, y, 0xF0A040, false);
-        if (VeyloriaClientState.instance().manaMax() > 0) {
-            guiGraphics.drawString(minecraft.font,
-                "Мана: " + VeyloriaClientState.instance().mana() + "/" + VeyloriaClientState.instance().manaMax(),
-                width - 120, y - 10, 0x40A0F0, false);
+
+        drawBar(guiGraphics, barX, hpY, barWidth, barHeight, hpCurrent, hpMax, 0xFFB02020);
+        String hpText = "HP " + Math.max(0, hpCurrent) + "/" + Math.max(1, hpMax);
+        guiGraphics.drawCenteredString(minecraft.font, hpText, width / 2, hpY - 9, 0xFF5050);
+
+        int mana = VeyloriaClientState.instance().mana();
+        int manaMax = VeyloriaClientState.instance().manaMax();
+        if (manaMax > 0) {
+            drawBar(guiGraphics, barX, manaY, barWidth, barHeight, mana, manaMax, 0xFF2B7CCF);
+            String manaText = "MP " + mana + "/" + manaMax;
+            guiGraphics.drawCenteredString(minecraft.font, manaText, width / 2, manaY - 9, 0x55B8FF);
         }
+        guiGraphics.drawString(minecraft.font, "Ур. " + minecraft.player.experienceLevel, 12, hpY - 1, 0xF0F0F0, false);
+        guiGraphics.drawString(minecraft.font, "Медь: " + VeyloriaClientState.instance().copper(), width - 110, hpY - 1, 0xF0A040, false);
+
+        int notificationBaseY = manaMax > 0 ? hpY - 24 : hpY - 14;
         int index = 0;
         for (VeyloriaClientState.Notification notification : VeyloriaClientState.instance().notifications()) {
-            guiGraphics.drawCenteredString(minecraft.font, notification.text(), width / 2, y - 14 - index * 10, 0xFFFFFF);
+            guiGraphics.drawCenteredString(minecraft.font, notification.text(), width / 2, notificationBaseY - index * 10, 0xFFFFFF);
             index++;
         }
     }
@@ -283,6 +297,17 @@ public final class VeyloriaClientEvents {
             return 1.0D;
         }
         return value;
+    }
+
+    private static void drawBar(GuiGraphics guiGraphics, int x, int y, int width, int height, int current, int max, int fillColor) {
+        int safeMax = Math.max(1, max);
+        double ratio = clamp01(Math.max(0, current) / (double) safeMax);
+        int fill = (int) Math.round(width * ratio);
+        guiGraphics.fill(x - 1, y - 1, x + width + 1, y + height + 1, 0xA0101010);
+        guiGraphics.fill(x, y, x + width, y + height, 0xB0000000);
+        if (fill > 0) {
+            guiGraphics.fill(x, y, x + fill, y + height, fillColor);
+        }
     }
 
     private static String rarityName(RpgItemData data) {

@@ -36,22 +36,29 @@ import org.slf4j.LoggerFactory;
 public final class MobSpawnService {
     private static final Logger LOGGER = LoggerFactory.getLogger("veyloria.spawn");
     private static final long NEUTRAL_RETALIATE_TICKS = 20L * 20L;
-    private static final long UNREACHABLE_EVADE_TICKS = 20L * 7L;
+    private static final long UNREACHABLE_EVADE_TICKS = 20L * 3L;
     private static final long EVADE_IMMUNITY_TICKS = 20L * 2L;
-    private static final double COMBAT_MIN_DISTANCE = 1.8D;
-    private static final double COMBAT_MAX_DISTANCE = 2.8D;
-    private static final double COMBAT_RETREAT_STEP = 1.4D;
-    private static final double LEASH_RADIUS_MULTIPLIER = 3.8D;
-    private static final double LEASH_MIN_RADIUS = 56.0D;
-    private static final double IDLE_ROAM_RADIUS_MULTIPLIER = 2.6D;
-    private static final double IDLE_ROAM_MIN_RADIUS = 30.0D;
+    private static final double COMBAT_MIN_DISTANCE = 2.0D;
+    private static final double COMBAT_MAX_DISTANCE = 3.3D;
+    private static final double COMBAT_RETREAT_STEP = 1.6D;
+    private static final double COMBAT_STRAFE_STEP = 0.9D;
+    private static final double MIN_BLOCKED_PATH_DISTANCE = 8.0D;
+    private static final double LEASH_RADIUS_MULTIPLIER = 4.8D;
+    private static final double HARD_LEASH_EVADE_MULTIPLIER = 1.22D;
+    private static final double LEASH_MIN_RADIUS = 72.0D;
+    private static final double IDLE_ROAM_RADIUS_MULTIPLIER = 3.4D;
+    private static final double IDLE_ROAM_MIN_RADIUS = 44.0D;
     private static final long NAMEPLATE_HEARTBEAT_TICKS = 20L;
     private static final int NAMEPLATE_SEGMENTS = 12;
     private static final int MIN_ACTIVE_MOBS_FLOOR = 520;
     private static final int MIN_ACTIVATION_RADIUS = 224;
     private static final double NORMAL_DENSITY_MULTIPLIER = 3.0D;
     private static final double NORMAL_PACK_MULTIPLIER = 2.3D;
-    private static final double MIN_INTER_MOB_DISTANCE = 2.2D;
+    private static final double MIN_INTER_MOB_DISTANCE = 3.0D;
+    private static final int TARGET_UPDATE_SHARDS = 2;
+    private static final int COMBAT_UPDATE_SHARDS = 2;
+    private static final int LEASH_UPDATE_SHARDS = 3;
+    private static final int NAMEPLATE_UPDATE_SHARDS = 2;
     private static final String TAG_CUSTOM_MOB = "veyloria_custom_mob";
     private static final String TAG_TEMPLATE_ID = "veyloria_template_id";
     private static final String TAG_SPAWN_GROUP_ID = "veyloria_spawn_group_id";
@@ -83,11 +90,13 @@ public final class MobSpawnService {
             cleanupTrackedMobs(level);
             List<ServerPlayer> authenticatedPlayers = authenticatedPlayers(level);
             Map<Long, Integer> aliveByGroup = aliveCountsByGroup(level);
+            Map<Long, MobTemplate> templateCache = new HashMap<>();
+            Map<Long, MobSpawnGroup> groupCache = new HashMap<>();
             spawnRareGroupsOnStartup(level, gameTime, aliveByGroup);
-            updateHostilityTargets(level, gameTime);
-            maintainCombatDistance(level, gameTime);
-            performIdleRoaming(level, gameTime);
-            enforceLeashes(level);
+            updateHostilityTargets(level, gameTime, templateCache);
+            maintainCombatDistance(level, gameTime, templateCache, groupCache);
+            performIdleRoaming(level, gameTime, templateCache, groupCache);
+            enforceLeashes(level, gameTime, templateCache, groupCache);
 
             if (authenticatedPlayers.isEmpty()) {
                 continue;
@@ -356,31 +365,37 @@ public final class MobSpawnService {
 
     private int rollPackSize(MobSpawnGroup group, MobTemplate template) {
         if (group.packSizeMax() <= group.packSizeMin()) {
-            return scaledPackSize(group.packSizeMin(), template);
+            return scaledPackSize(group.packSizeMin(), group, template);
         }
         int rolled = group.packSizeMin() + random.nextInt(group.packSizeMax() - group.packSizeMin() + 1);
-        return scaledPackSize(rolled, template);
+        return scaledPackSize(rolled, group, template);
     }
 
-    private int scaledPackSize(int value, MobTemplate template) {
+    private int scaledPackSize(int value, MobSpawnGroup group, MobTemplate template) {
         if (template.mobType() != MobType.NORMAL) {
             return Math.max(1, value);
         }
-        return Math.max(1, (int) Math.ceil(value * NORMAL_PACK_MULTIPLIER));
+        int zone = TestWorldLayoutService.zoneIndex(group.dimension(), group.centerZ());
+        double zoneMultiplier = Math.max(0.40D, VeyloriaServerRuntime.instance().serverConfig().zonePackMultiplier(zone));
+        return Math.max(1, (int) Math.ceil(value * NORMAL_PACK_MULTIPLIER * zoneMultiplier));
     }
 
     private int desiredMinAlive(MobSpawnGroup group, MobTemplate template) {
         if (template.mobType() != MobType.NORMAL) {
             return group.minAlive();
         }
-        return Math.max(group.minAlive(), (int) Math.ceil(group.minAlive() * NORMAL_DENSITY_MULTIPLIER));
+        int zone = TestWorldLayoutService.zoneIndex(group.dimension(), group.centerZ());
+        double zoneMultiplier = Math.max(0.40D, VeyloriaServerRuntime.instance().serverConfig().zoneDensityMultiplier(zone));
+        return Math.max(group.minAlive(), (int) Math.ceil(group.minAlive() * NORMAL_DENSITY_MULTIPLIER * zoneMultiplier));
     }
 
     private int desiredMaxAlive(MobSpawnGroup group, MobTemplate template) {
         if (template.mobType() != MobType.NORMAL) {
             return group.maxAlive();
         }
-        int scaled = Math.max(group.maxAlive(), (int) Math.ceil(group.maxAlive() * NORMAL_DENSITY_MULTIPLIER));
+        int zone = TestWorldLayoutService.zoneIndex(group.dimension(), group.centerZ());
+        double zoneMultiplier = Math.max(0.40D, VeyloriaServerRuntime.instance().serverConfig().zoneDensityMultiplier(zone));
+        int scaled = Math.max(group.maxAlive(), (int) Math.ceil(group.maxAlive() * NORMAL_DENSITY_MULTIPLIER * zoneMultiplier));
         return Math.max(desiredMinAlive(group, template), scaled);
     }
 
@@ -525,54 +540,64 @@ public final class MobSpawnService {
         mob.setCustomName(buildNameplate(template, (int) Math.ceil(maxHealth), (int) Math.ceil(maxHealth)));
     }
 
-    private void updateHostilityTargets(ServerLevel level, long gameTick) {
+    private void updateHostilityTargets(ServerLevel level, long gameTick, Map<Long, MobTemplate> templateCache) {
         for (Map.Entry<UUID, MobInstance> entry : trackedMobs.entrySet()) {
             Entity entity = level.getEntity(entry.getKey());
             if (!(entity instanceof Mob mob) || !mob.isAlive()) {
                 continue;
             }
-            if (isEvading(entry.getKey(), gameTick)) {
-                mob.setTarget(null);
-                mob.getNavigation().stop();
-                continue;
-            }
-            MobTemplate template = VeyloriaServerRuntime.instance().contentService().mobTemplate(entry.getValue().templateId());
+            MobTemplate template = templateForInstance(entry.getValue(), templateCache);
             if (template == null) {
                 continue;
             }
-            switch (template.hostilityType()) {
-                case FRIENDLY -> {
-                    if (mob.getTarget() instanceof ServerPlayer) {
-                        mob.setTarget(null);
-                    }
-                    LivingEntity hostileTarget = findNearestMobByHostility(level, mob, HostilityType.HOSTILE, template.aggroRadius());
-                    if (hostileTarget != null) {
-                        mob.setTarget(hostileTarget);
-                    }
+            boolean updateTargetNow = shouldRunShard(mob.getUUID(), gameTick, TARGET_UPDATE_SHARDS);
+            if (isEvading(entry.getKey(), gameTick)) {
+                if (updateTargetNow) {
+                    mob.setTarget(null);
+                    mob.getNavigation().stop();
                 }
-                case HOSTILE -> {
-                    ServerPlayer topThreatTarget = highestThreatTarget(level, entry.getValue());
-                    if (topThreatTarget != null) {
-                        mob.setTarget(topThreatTarget);
-                        break;
-                    }
-                    LivingEntity currentTarget = mob.getTarget();
-                    if (currentTarget == null || !currentTarget.isAlive() || !(currentTarget instanceof ServerPlayer)) {
-                        LivingEntity friendlyTarget = findNearestMobByHostility(level, mob, HostilityType.FRIENDLY, template.aggroRadius());
-                        if (friendlyTarget != null) {
-                            mob.setTarget(friendlyTarget);
+                if (shouldRunShard(mob.getUUID(), gameTick, NAMEPLATE_UPDATE_SHARDS)) {
+                    updateNameplate(mob, template, gameTick);
+                }
+                continue;
+            }
+            if (updateTargetNow) {
+                switch (template.hostilityType()) {
+                    case FRIENDLY -> {
+                        if (mob.getTarget() instanceof ServerPlayer) {
+                            mob.setTarget(null);
+                        }
+                        LivingEntity hostileTarget = findNearestMobByHostility(level, mob, HostilityType.HOSTILE, template.aggroRadius());
+                        if (hostileTarget != null) {
+                            mob.setTarget(hostileTarget);
                         }
                     }
-                }
-                case NEUTRAL -> {
-                    if (mob.getTarget() instanceof ServerPlayer player
-                        && !canNeutralDamage(mob.getUUID(), player.getUUID(), gameTick)) {
-                        mob.setTarget(null);
+                    case HOSTILE -> {
+                        ServerPlayer topThreatTarget = highestThreatTarget(level, entry.getValue());
+                        if (topThreatTarget != null) {
+                            mob.setTarget(topThreatTarget);
+                            break;
+                        }
+                        LivingEntity currentTarget = mob.getTarget();
+                        if (currentTarget == null || !currentTarget.isAlive() || !(currentTarget instanceof ServerPlayer)) {
+                            LivingEntity friendlyTarget = findNearestMobByHostility(level, mob, HostilityType.FRIENDLY, template.aggroRadius());
+                            if (friendlyTarget != null) {
+                                mob.setTarget(friendlyTarget);
+                            }
+                        }
+                    }
+                    case NEUTRAL -> {
+                        if (mob.getTarget() instanceof ServerPlayer player
+                            && !canNeutralDamage(mob.getUUID(), player.getUUID(), gameTick)) {
+                            mob.setTarget(null);
+                        }
                     }
                 }
             }
             suppressDaylightBurn(level, mob, template);
-            updateNameplate(mob, template, gameTick);
+            if (shouldRunShard(mob.getUUID(), gameTick, NAMEPLATE_UPDATE_SHARDS)) {
+                updateNameplate(mob, template, gameTick);
+            }
         }
     }
 
@@ -612,14 +637,18 @@ public final class MobSpawnService {
         return selected;
     }
 
-    private void enforceLeashes(ServerLevel level) {
+    private void enforceLeashes(ServerLevel level, long gameTick, Map<Long, MobTemplate> templateCache,
+                                Map<Long, MobSpawnGroup> groupCache) {
         for (Map.Entry<UUID, MobInstance> entry : trackedMobs.entrySet()) {
             Entity entity = level.getEntity(entry.getKey());
             if (!(entity instanceof Mob mob) || !mob.isAlive()) {
                 continue;
             }
-            MobTemplate template = VeyloriaServerRuntime.instance().contentService().mobTemplate(entry.getValue().templateId());
-            MobSpawnGroup group = VeyloriaServerRuntime.instance().contentService().spawnGroup(entry.getValue().spawnGroupId());
+            if (!shouldRunShard(mob.getUUID(), gameTick, LEASH_UPDATE_SHARDS)) {
+                continue;
+            }
+            MobTemplate template = templateForInstance(entry.getValue(), templateCache);
+            MobSpawnGroup group = groupForInstance(entry.getValue(), groupCache);
             if (template == null || group == null) {
                 continue;
             }
@@ -627,18 +656,28 @@ public final class MobSpawnService {
                 continue;
             }
             Vec3 anchor = spawnAnchor(mob, group);
-            double leashRadius = Math.max(LEASH_MIN_RADIUS, template.leashRadius() * LEASH_RADIUS_MULTIPLIER);
-            if (mob.distanceToSqr(anchor) <= leashRadius * leashRadius) {
+            double softLeashRadius = Math.max(LEASH_MIN_RADIUS, template.leashRadius() * LEASH_RADIUS_MULTIPLIER);
+            double hardLeashRadius = softLeashRadius * HARD_LEASH_EVADE_MULTIPLIER;
+            double distanceToAnchorSqr = mob.distanceToSqr(anchor);
+            if (distanceToAnchorSqr <= softLeashRadius * softLeashRadius) {
                 continue;
             }
-            triggerEvade(level, mob, entry.getValue(), group, anchor, level.getGameTime(), "leash");
+            if (distanceToAnchorSqr <= hardLeashRadius * hardLeashRadius && mob.getTarget() == null && !isEvading(mob.getUUID(), gameTick)) {
+                mob.getNavigation().moveTo(anchor.x, anchor.y, anchor.z, 1.03D);
+                continue;
+            }
+            triggerEvade(level, mob, entry.getValue(), group, anchor, gameTick, "leash_hard");
         }
     }
 
-    private void maintainCombatDistance(ServerLevel level, long gameTick) {
+    private void maintainCombatDistance(ServerLevel level, long gameTick, Map<Long, MobTemplate> templateCache,
+                                        Map<Long, MobSpawnGroup> groupCache) {
         for (Map.Entry<UUID, MobInstance> entry : trackedMobs.entrySet()) {
             Entity raw = level.getEntity(entry.getKey());
             if (!(raw instanceof Mob mob) || !mob.isAlive()) {
+                continue;
+            }
+            if (!shouldRunShard(mob.getUUID(), gameTick, COMBAT_UPDATE_SHARDS)) {
                 continue;
             }
             if (!(mob.getTarget() instanceof ServerPlayer target) || !target.isAlive()) {
@@ -654,7 +693,7 @@ public final class MobSpawnService {
             double distance = mob.distanceTo(target);
             boolean hasPath = true;
             if (distance > COMBAT_MAX_DISTANCE) {
-                hasPath = mob.getNavigation().moveTo(target, 1.0D);
+                hasPath = mob.getNavigation().moveTo(target, 1.05D);
             } else if (distance < COMBAT_MIN_DISTANCE) {
                 Vec3 delta = mob.position().subtract(target.position());
                 if (delta.lengthSqr() > 0.0001D) {
@@ -662,14 +701,25 @@ public final class MobSpawnService {
                     mob.getNavigation().moveTo(mob.getX() + retreat.x, mob.getY(), mob.getZ() + retreat.z, 1.0D);
                 }
             } else {
-                mob.getNavigation().stop();
+                Vec3 toTarget = target.position().subtract(mob.position());
+                if (toTarget.lengthSqr() > 0.001D && ((gameTick + Math.abs(mob.getUUID().hashCode())) % 16L == 0L)) {
+                    Vec3 forward = toTarget.normalize();
+                    Vec3 side = new Vec3(-forward.z, 0.0D, forward.x);
+                    double sideSign = (mob.getUUID().getLeastSignificantBits() & 1L) == 0L ? 1.0D : -1.0D;
+                    Vec3 strafe = side.scale(sideSign * COMBAT_STRAFE_STEP);
+                    double ringDistance = (COMBAT_MIN_DISTANCE + COMBAT_MAX_DISTANCE) * 0.5D;
+                    Vec3 holdPoint = target.position().subtract(forward.scale(ringDistance)).add(strafe);
+                    hasPath = mob.getNavigation().moveTo(holdPoint.x, target.getY(), holdPoint.z, 0.96D);
+                } else {
+                    mob.getNavigation().stop();
+                }
             }
 
             boolean hasLineOfSight = mob.hasLineOfSight(target);
             if (!hasLineOfSight && distance > COMBAT_MIN_DISTANCE) {
-                mob.getNavigation().moveTo(target, 1.05D);
+                hasPath = mob.getNavigation().moveTo(target, 1.08D);
             }
-            boolean blocked = distance > COMBAT_MAX_DISTANCE && !hasPath;
+            boolean blocked = distance > MIN_BLOCKED_PATH_DISTANCE && !hasPath && !hasLineOfSight;
             if (!blocked) {
                 blockedAttackSinceTick.remove(entry.getKey());
                 continue;
@@ -678,33 +728,49 @@ public final class MobSpawnService {
             if (gameTick - blockedSince < UNREACHABLE_EVADE_TICKS) {
                 continue;
             }
-            MobSpawnGroup group = VeyloriaServerRuntime.instance().contentService().spawnGroup(entry.getValue().spawnGroupId());
+            MobSpawnGroup group = groupForInstance(entry.getValue(), groupCache);
             if (group == null) {
                 blockedAttackSinceTick.remove(entry.getKey());
                 continue;
             }
-            triggerEvade(level, mob, entry.getValue(), group, spawnAnchor(mob, group), gameTick, "unreachable");
+            MobTemplate template = templateForInstance(entry.getValue(), templateCache);
+            if (template == null) {
+                blockedAttackSinceTick.remove(entry.getKey());
+                continue;
+            }
+            Vec3 anchor = spawnAnchor(mob, group);
+            double hardLeash = Math.max(LEASH_MIN_RADIUS, template.leashRadius() * LEASH_RADIUS_MULTIPLIER) * HARD_LEASH_EVADE_MULTIPLIER;
+            if (mob.distanceToSqr(anchor) <= hardLeash * hardLeash) {
+                mob.getNavigation().moveTo(anchor.x, anchor.y, anchor.z, 1.08D);
+                blockedAttackSinceTick.put(entry.getKey(), gameTick);
+                continue;
+            }
+            triggerEvade(level, mob, entry.getValue(), group, anchor, gameTick, "unreachable");
         }
     }
 
-    private void performIdleRoaming(ServerLevel level, long gameTick) {
+    private void performIdleRoaming(ServerLevel level, long gameTick, Map<Long, MobTemplate> templateCache,
+                                    Map<Long, MobSpawnGroup> groupCache) {
         for (Map.Entry<UUID, MobInstance> entry : trackedMobs.entrySet()) {
             Entity raw = level.getEntity(entry.getKey());
             if (!(raw instanceof Mob mob) || !mob.isAlive()) {
                 continue;
             }
+            if (!shouldRunShard(mob.getUUID(), gameTick, LEASH_UPDATE_SHARDS)) {
+                continue;
+            }
             if (mob.getTarget() != null || isEvading(mob.getUUID(), gameTick)) {
                 continue;
             }
-            MobTemplate template = VeyloriaServerRuntime.instance().contentService().mobTemplate(entry.getValue().templateId());
-            MobSpawnGroup group = VeyloriaServerRuntime.instance().contentService().spawnGroup(entry.getValue().spawnGroupId());
+            MobTemplate template = templateForInstance(entry.getValue(), templateCache);
+            MobSpawnGroup group = groupForInstance(entry.getValue(), groupCache);
             if (template == null || group == null) {
                 continue;
             }
             int cadence = switch (template.hostilityType()) {
-                case HOSTILE -> 22;
-                case NEUTRAL -> 34;
-                case FRIENDLY -> 46;
+                case HOSTILE -> 14;
+                case NEUTRAL -> 20;
+                case FRIENDLY -> 28;
             };
             int jitter = Math.floorMod(mob.getUUID().hashCode(), cadence);
             if ((gameTick + jitter) % cadence != 0L) {
@@ -713,9 +779,9 @@ public final class MobSpawnService {
             Vec3 anchor = spawnAnchor(mob, group);
             double roamRadius = Math.max(IDLE_ROAM_MIN_RADIUS, template.leashRadius() * IDLE_ROAM_RADIUS_MULTIPLIER);
             double roamSpeed = switch (template.hostilityType()) {
-                case HOSTILE -> 1.08D;
-                case NEUTRAL -> 1.00D;
-                case FRIENDLY -> 0.95D;
+                case HOSTILE -> 1.12D;
+                case NEUTRAL -> 1.04D;
+                case FRIENDLY -> 0.98D;
             };
             for (int attempt = 0; attempt < 10; attempt++) {
                 double angle = random.nextDouble() * Math.PI * 2.0D;
@@ -830,6 +896,24 @@ public final class MobSpawnService {
             mob.getPersistentData().getDouble(TAG_SPAWN_Y),
             mob.getPersistentData().getDouble(TAG_SPAWN_Z)
         );
+    }
+
+    private static boolean shouldRunShard(UUID entityUuid, long gameTick, int shardCount) {
+        if (shardCount <= 1) {
+            return true;
+        }
+        int shard = Math.floorMod(entityUuid.hashCode(), shardCount);
+        return shard == Math.floorMod(gameTick, shardCount);
+    }
+
+    private MobTemplate templateForInstance(MobInstance instance, Map<Long, MobTemplate> cache) {
+        return cache.computeIfAbsent(instance.templateId(),
+            id -> VeyloriaServerRuntime.instance().contentService().mobTemplate(id));
+    }
+
+    private MobSpawnGroup groupForInstance(MobInstance instance, Map<Long, MobSpawnGroup> cache) {
+        return cache.computeIfAbsent(instance.spawnGroupId(),
+            id -> VeyloriaServerRuntime.instance().contentService().spawnGroup(id));
     }
 
     private boolean isTooCloseToManagedMob(ServerLevel level, double x, double y, double z, double radius) {

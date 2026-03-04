@@ -13,6 +13,7 @@ import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -25,14 +26,19 @@ public final class ConfigService {
         ensureDefault(configPath, "veyloria-defaults/server.yml");
         Map<String, Object> raw = readYaml(configPath);
         Map<String, Object> combat = map(raw.get("combat"));
+        ServerConfig defaults = ServerConfig.defaults();
+        Map<Integer, Double> zoneDensityMultipliers = zoneMultipliers(raw, "zone_density_multipliers", defaults.zoneDensityMultipliers());
+        Map<Integer, Double> zonePackMultipliers = zoneMultipliers(raw, "zone_pack_multipliers", defaults.zonePackMultipliers());
         ServerConfig config = new ServerConfig(
-            string(raw, "database_path", ServerConfig.defaults().databasePath()),
-            string(raw, "seed_path", ServerConfig.defaults().seedPath()),
-            string(raw, "migration_path", ServerConfig.defaults().migrationPath()),
-            integer(raw, "spawn_tick_interval", ServerConfig.defaults().spawnTickInterval()),
-            integer(raw, "spawn_activation_radius", ServerConfig.defaults().spawnActivationRadius()),
-            integer(raw, "auth_lock_tick_interval", ServerConfig.defaults().authLockTickInterval()),
-            integer(raw, "max_active_mobs_per_dimension", ServerConfig.defaults().maxActiveMobsPerDimension()),
+            string(raw, "database_path", defaults.databasePath()),
+            string(raw, "seed_path", defaults.seedPath()),
+            string(raw, "migration_path", defaults.migrationPath()),
+            integer(raw, "spawn_tick_interval", defaults.spawnTickInterval()),
+            integer(raw, "spawn_activation_radius", defaults.spawnActivationRadius()),
+            integer(raw, "auth_lock_tick_interval", defaults.authLockTickInterval()),
+            integer(raw, "max_active_mobs_per_dimension", defaults.maxActiveMobsPerDimension()),
+            zoneDensityMultipliers,
+            zonePackMultipliers,
             new CombatConfig(
                 decimal(combat, "player_base_damage", CombatConfig.defaults().playerBaseDamage()),
                 decimal(combat, "player_base_health", CombatConfig.defaults().playerBaseHealth()),
@@ -210,5 +216,45 @@ public final class ConfigService {
     private static double decimal(Map<String, Object> map, String key, double fallback) {
         Object value = map.get(key);
         return value instanceof Number number ? number.doubleValue() : fallback;
+    }
+
+    private static Map<Integer, Double> zoneMultipliers(Map<String, Object> root, String key, Map<Integer, Double> fallback) {
+        Map<String, Object> raw = map(root.get(key));
+        if (raw.isEmpty()) {
+            return fallback;
+        }
+        Map<Integer, Double> parsed = new LinkedHashMap<>();
+        for (Map.Entry<String, Object> entry : raw.entrySet()) {
+            int zoneIndex = parseZoneIndex(entry.getKey());
+            if (zoneIndex <= 0) {
+                continue;
+            }
+            if (!(entry.getValue() instanceof Number number)) {
+                continue;
+            }
+            double multiplier = number.doubleValue();
+            if (multiplier <= 0.0D) {
+                continue;
+            }
+            parsed.put(zoneIndex, multiplier);
+        }
+        return parsed.isEmpty() ? fallback : parsed;
+    }
+
+    private static int parseZoneIndex(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return -1;
+        }
+        String normalized = raw.trim().toLowerCase(Locale.ROOT);
+        if (normalized.startsWith("zone_")) {
+            normalized = normalized.substring("zone_".length());
+        } else if (normalized.startsWith("zone")) {
+            normalized = normalized.substring("zone".length());
+        }
+        try {
+            return Integer.parseInt(normalized);
+        } catch (NumberFormatException ignored) {
+            return -1;
+        }
     }
 }

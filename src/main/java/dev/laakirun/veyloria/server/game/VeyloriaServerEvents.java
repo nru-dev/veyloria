@@ -40,6 +40,7 @@ import net.minecraft.world.entity.ExperienceOrb;
 import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.Mob;
+import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.entity.decoration.ArmorStand;
 import net.minecraft.world.entity.player.Player;
@@ -54,6 +55,7 @@ import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.event.RegisterCommandsEvent;
 import net.neoforged.neoforge.event.level.BlockEvent;
 import net.neoforged.neoforge.event.entity.living.LivingDeathEvent;
+import net.neoforged.neoforge.event.entity.living.LivingDropsEvent;
 import net.neoforged.neoforge.event.entity.living.LivingIncomingDamageEvent;
 import net.neoforged.neoforge.event.entity.living.LivingKnockBackEvent;
 import net.neoforged.neoforge.event.entity.EntityJoinLevelEvent;
@@ -226,6 +228,13 @@ public final class VeyloriaServerEvents {
             orb.discard();
             return;
         }
+        if (event.getEntity() instanceof ItemEntity drop) {
+            if (shouldDiscardNonRpgDrop(event, drop)) {
+                event.setCanceled(true);
+                drop.discard();
+            }
+            return;
+        }
         if (!(event.getEntity() instanceof Mob mob)) {
             return;
         }
@@ -241,6 +250,22 @@ public final class VeyloriaServerEvents {
         }
         event.setCanceled(true);
         mob.discard();
+    }
+
+    @SubscribeEvent
+    public void onLivingDrops(LivingDropsEvent event) {
+        if (!(event.getEntity().level() instanceof ServerLevel)) {
+            return;
+        }
+        MobSpawnService spawnService = VeyloriaServerRuntime.instance().mobSpawnService();
+        if (spawnService == null) {
+            return;
+        }
+        MobTemplate template = spawnService.template(event.getEntity().getUUID());
+        if (template == null) {
+            return;
+        }
+        event.getDrops().clear();
     }
 
     @SubscribeEvent
@@ -763,6 +788,17 @@ public final class VeyloriaServerEvents {
 
     private static boolean canModifyWorld(ServerPlayer player) {
         return player.hasPermissions(2);
+    }
+
+    private boolean shouldDiscardNonRpgDrop(EntityJoinLevelEvent event, ItemEntity drop) {
+        if (RpgItemUtils.read(drop.getItem()) != null) {
+            return false;
+        }
+        if (!(event.getLevel() instanceof ServerLevel level)) {
+            return false;
+        }
+        String dimension = level.dimension().location().toString();
+        return TestWorldLayoutService.zoneIndex(dimension, drop.getZ()) >= 1;
     }
 
     private static boolean isFireTickDamage(String messageId) {
@@ -1436,8 +1472,8 @@ public final class VeyloriaServerEvents {
     private void syncPlayerHud(ServerPlayer player, CharacterProfile profile) {
         int xpToNext = Math.max(1, VeyloriaServerRuntime.instance().levelService().xpToNextLevel(profile.level()));
         player.experienceLevel = Math.max(1, profile.level());
-        player.experienceProgress = (float) Math.max(0.0D, Math.min(1.0D, profile.xpCurrent() / (double) xpToNext));
-        player.totalExperience = Math.max(0, profile.xpTotal());
+        player.experienceProgress = 0.0F;
+        player.totalExperience = 0;
         if (player.getAttribute(Attributes.MAX_HEALTH) != null) {
             player.getAttribute(Attributes.MAX_HEALTH).setBaseValue(DEFAULT_PLAYER_MAX_HEALTH);
             if (player.getHealth() > DEFAULT_PLAYER_MAX_HEALTH) {

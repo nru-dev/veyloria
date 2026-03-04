@@ -130,6 +130,7 @@ public final class TestWorldLayoutService {
             return;
         }
         overworld.getGameRules().getRule(GameRules.RULE_DOMOBSPAWNING).set(false, server);
+        overworld.getGameRules().getRule(GameRules.RULE_KEEPINVENTORY).set(true, server);
         BlockPos spawnPos = starterSpawnPos();
         overworld.setDefaultSpawnPos(spawnPos, 180.0F);
         worldConfigured = true;
