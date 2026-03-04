@@ -58,8 +58,10 @@ import net.neoforged.neoforge.event.entity.living.LivingDeathEvent;
 import net.neoforged.neoforge.event.entity.living.LivingDropsEvent;
 import net.neoforged.neoforge.event.entity.living.LivingIncomingDamageEvent;
 import net.neoforged.neoforge.event.entity.living.LivingKnockBackEvent;
+import net.neoforged.neoforge.event.entity.living.LivingEntityUseItemEvent;
 import net.neoforged.neoforge.event.entity.EntityJoinLevelEvent;
 import net.neoforged.neoforge.event.entity.player.AttackEntityEvent;
+import net.neoforged.neoforge.event.entity.player.ItemEntityPickupEvent;
 import net.neoforged.neoforge.event.entity.player.PlayerEvent;
 import net.neoforged.neoforge.event.entity.player.PlayerInteractEvent;
 import net.neoforged.neoforge.event.entity.player.PlayerXpEvent;
@@ -147,6 +149,7 @@ public final class VeyloriaServerEvents {
         }
         runtime.testWorldLayoutService().ensureStarterSpawn(player);
         grantBestTestSword(player);
+        runtime.playerLoadoutService().initializePlayer(player);
         syncPlayerHud(player, profile);
     }
 
@@ -158,10 +161,18 @@ public final class VeyloriaServerEvents {
         VeyloriaServerRuntime.instance().partyService().removeMember(player.getUUID());
         VeyloriaServerRuntime.instance().authService().logout(player.getUUID());
         VeyloriaServerRuntime.instance().characterService().unload(player.getUUID());
+        VeyloriaServerRuntime.instance().playerLoadoutService().unload(player.getUUID());
         lastPlayerAttackTick.remove(player.getUUID());
         lastSkillUseTick.remove(player.getUUID());
         manaByPlayer.remove(player.getUUID());
         invalidateBarsCache(player.getUUID());
+    }
+
+    @SubscribeEvent
+    public void onPlayerRespawn(PlayerEvent.PlayerRespawnEvent event) {
+        if (event.getEntity() instanceof ServerPlayer player) {
+            VeyloriaServerRuntime.instance().playerLoadoutService().initializePlayer(player);
+        }
     }
 
     @SubscribeEvent
@@ -187,7 +198,8 @@ public final class VeyloriaServerEvents {
             || runtime.characterService() == null
             || runtime.mobSpawnService() == null
             || runtime.testWorldLayoutService() == null
-            || runtime.gearDropService() == null) {
+            || runtime.gearDropService() == null
+            || runtime.playerLoadoutService() == null) {
             return;
         }
         long gameTime = event.getServer().overworld().getGameTime();
@@ -197,11 +209,10 @@ public final class VeyloriaServerEvents {
         for (ServerPlayer player : event.getServer().getPlayerList().getPlayers()) {
             disableHunger(player);
             enforceBuildMode(player);
-            enforceRequiredLevel(player);
-            enforceTwoHandedRule(player);
-            if (shouldSyncProfile && isAuthenticated(player)) {
-                CharacterProfile profile = runtime.characterService().loadedProfile(player.getUUID());
-                if (profile != null) {
+            CharacterProfile profile = runtime.characterService().loadedProfile(player.getUUID());
+            if (profile != null) {
+                runtime.playerLoadoutService().tick(player, profile.level());
+                if (shouldSyncProfile && isAuthenticated(player)) {
                     syncPlayerHud(player, profile);
                 }
             }
@@ -305,6 +316,7 @@ public final class VeyloriaServerEvents {
         if (!(event.getEntity() instanceof ServerPlayer player)) {
             return;
         }
+        VeyloriaServerRuntime.instance().playerLoadoutService().initializePlayer(player);
         event.setCanceled(true);
         if (!(event.getTarget() instanceof LivingEntity target)) {
             return;
@@ -327,7 +339,7 @@ public final class VeyloriaServerEvents {
             return;
         }
         BaseStatsSnapshot stats = snapshotStats(player, profile);
-        RpgItemData weapon = RpgItemUtils.read(player.getMainHandItem());
+        RpgItemData weapon = RpgItemUtils.read(VeyloriaServerRuntime.instance().playerLoadoutService().currentWeapon(player));
         double baseDamage = computePlayerDamageByWeapon(profile.level(), stats, weapon);
         DamageRoll roll = rollDamage(stats, weapon, baseDamage);
         DamageSource damageSource = player.damageSources().playerAttack(player);
@@ -453,6 +465,16 @@ public final class VeyloriaServerEvents {
     }
 
     @SubscribeEvent
+    public void onItemEntityPickup(ItemEntityPickupEvent.Post event) {
+        if (event.getPlayer() instanceof ServerPlayer player) {
+            VeyloriaServerRuntime runtime = VeyloriaServerRuntime.instance();
+            if (runtime.playerLoadoutService() != null) {
+                runtime.playerLoadoutService().sanitizePickupMirrorSlot(player);
+            }
+        }
+    }
+
+    @SubscribeEvent
     public void onPlayerXpChange(PlayerXpEvent.XpChange event) {
         event.setAmount(0);
         event.setCanceled(true);
@@ -519,7 +541,8 @@ public final class VeyloriaServerEvents {
         if (event.getHand() != InteractionHand.MAIN_HAND) {
             return;
         }
-        RpgItemData weapon = RpgItemUtils.read(player.getMainHandItem());
+        VeyloriaServerRuntime.instance().playerLoadoutService().initializePlayer(player);
+        RpgItemData weapon = RpgItemUtils.read(VeyloriaServerRuntime.instance().playerLoadoutService().currentWeapon(player));
         if (weapon == null || weapon.weaponType().isBlank()) {
             return;
         }
@@ -538,6 +561,29 @@ public final class VeyloriaServerEvents {
             event.setCanceled(true);
             lastSkillUseTick.put(player.getUUID(), gameTime);
         }
+    }
+
+    @SubscribeEvent
+    public void onUseItemStop(LivingEntityUseItemEvent.Stop event) {
+        if (!(event.getEntity() instanceof ServerPlayer player)) {
+            return;
+        }
+        if (!VeyloriaServerRuntime.instance().playerLoadoutService().isUsingConsumable(player)) {
+            return;
+        }
+        VeyloriaServerRuntime.instance().playerLoadoutService().resumeConsumableUse(player);
+        event.setCanceled(true);
+    }
+
+    @SubscribeEvent
+    public void onUseItemFinish(LivingEntityUseItemEvent.Finish event) {
+        if (!(event.getEntity() instanceof ServerPlayer player)) {
+            return;
+        }
+        if (!VeyloriaServerRuntime.instance().playerLoadoutService().isUsingConsumable(player)) {
+            return;
+        }
+        VeyloriaServerRuntime.instance().playerLoadoutService().finishConsumableUse(player, event.getResultStack());
     }
 
     private int applyRateOverride(CommandSourceStack source, String rateTypeRaw, double value) {
@@ -1360,7 +1406,7 @@ public final class VeyloriaServerEvents {
     }
 
     private boolean hasManaWeaponEquipped(ServerPlayer player) {
-        return isManaWeapon(player.getMainHandItem()) || isManaWeapon(player.getOffhandItem());
+        return isManaWeapon(VeyloriaServerRuntime.instance().playerLoadoutService().currentWeapon(player));
     }
 
     private static boolean isManaWeapon(ItemStack stack) {
@@ -1387,47 +1433,6 @@ public final class VeyloriaServerEvents {
             }
         }
         return null;
-    }
-
-    private void enforceRequiredLevel(ServerPlayer player) {
-        CharacterProfile profile = VeyloriaServerRuntime.instance().characterService().loadedProfile(player.getUUID());
-        if (profile == null) {
-            return;
-        }
-        stripIfTooHighLevel(player, player.getMainHandItem(), profile.level(), () -> player.setItemInHand(InteractionHand.MAIN_HAND, ItemStack.EMPTY));
-        stripIfTooHighLevel(player, player.getOffhandItem(), profile.level(), () -> player.setItemInHand(InteractionHand.OFF_HAND, ItemStack.EMPTY));
-        stripIfTooHighLevel(player, player.getItemBySlot(EquipmentSlot.HEAD), profile.level(), () -> player.setItemSlot(EquipmentSlot.HEAD, ItemStack.EMPTY));
-        stripIfTooHighLevel(player, player.getItemBySlot(EquipmentSlot.CHEST), profile.level(), () -> player.setItemSlot(EquipmentSlot.CHEST, ItemStack.EMPTY));
-        stripIfTooHighLevel(player, player.getItemBySlot(EquipmentSlot.LEGS), profile.level(), () -> player.setItemSlot(EquipmentSlot.LEGS, ItemStack.EMPTY));
-        stripIfTooHighLevel(player, player.getItemBySlot(EquipmentSlot.FEET), profile.level(), () -> player.setItemSlot(EquipmentSlot.FEET, ItemStack.EMPTY));
-    }
-
-    private void enforceTwoHandedRule(ServerPlayer player) {
-        RpgItemData main = RpgItemUtils.read(player.getMainHandItem());
-        if (main == null || !main.twoHanded()) {
-            return;
-        }
-        ItemStack offhand = player.getOffhandItem();
-        if (offhand.isEmpty()) {
-            return;
-        }
-        ItemStack copy = offhand.copy();
-        player.setItemInHand(InteractionHand.OFF_HAND, ItemStack.EMPTY);
-        if (!player.getInventory().add(copy)) {
-            player.drop(copy, false);
-        }
-    }
-
-    private void stripIfTooHighLevel(ServerPlayer player, ItemStack stack, int playerLevel, Runnable clearSlot) {
-        RpgItemData item = RpgItemUtils.read(stack);
-        if (item == null || item.requiredLevel() <= playerLevel) {
-            return;
-        }
-        ItemStack copy = stack.copy();
-        clearSlot.run();
-        if (!player.getInventory().add(copy)) {
-            player.drop(copy, false);
-        }
     }
 
     private record BaseStatsSnapshot(int strength, int stamina, int armor, int agility, int intellect) {
@@ -1470,6 +1475,7 @@ public final class VeyloriaServerEvents {
     }
 
     private void syncPlayerHud(ServerPlayer player, CharacterProfile profile) {
+        BaseStats totalStats = VeyloriaServerRuntime.instance().playerStatService().totalStats(player, profile);
         int xpToNext = Math.max(1, VeyloriaServerRuntime.instance().levelService().xpToNextLevel(profile.level()));
         player.experienceLevel = Math.max(1, profile.level());
         player.experienceProgress = 0.0F;
@@ -1490,6 +1496,6 @@ public final class VeyloriaServerEvents {
         } else {
             manaByPlayer.remove(player.getUUID());
         }
-        ServerMarkers.sendProfile(player, profile, xpToNext, currentMana, maxMana);
+        ServerMarkers.sendProfile(player, profile, xpToNext, currentMana, maxMana, totalStats);
     }
 }

@@ -1,6 +1,7 @@
 package dev.laakirun.veyloria.server.game;
 
 import dev.laakirun.veyloria.common.model.CharacterProfile;
+import dev.laakirun.veyloria.common.model.BaseStats;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerPlayer;
 import java.util.UUID;
@@ -25,7 +26,8 @@ public final class ServerMarkers {
         player.sendSystemMessage(Component.literal(AUTH_OK));
     }
 
-    public static void sendProfile(ServerPlayer player, CharacterProfile profile, int xpToNextLevel, int manaCurrent, int manaMax) {
+    public static void sendProfile(ServerPlayer player, CharacterProfile profile, int xpToNextLevel, int manaCurrent, int manaMax,
+                                   BaseStats totalStats) {
         player.sendSystemMessage(Component.literal(
             PROFILE +
                 "|level=" + profile.level() +
@@ -33,7 +35,12 @@ public final class ServerMarkers {
                 "|xpNext=" + xpToNextLevel +
                 "|copper=" + profile.currencyCopper() +
                 "|mana=" + manaCurrent +
-                "|manaMax=" + manaMax
+                "|manaMax=" + manaMax +
+                "|power=" + totalStats.power() +
+                "|vitality=" + totalStats.vitality() +
+                "|armor=" + totalStats.armor() +
+                "|crit=" + totalStats.crit() +
+                "|haste=" + totalStats.haste()
         ));
     }
 

@@ -1,27 +1,38 @@
 package dev.laakirun.veyloria.client;
 
+import com.mojang.blaze3d.platform.InputConstants;
 import dev.laakirun.veyloria.common.VeyloriaConstants;
+import dev.laakirun.veyloria.common.item.PlayerLoadoutData;
 import dev.laakirun.veyloria.common.item.RpgItemData;
+import dev.laakirun.veyloria.common.model.BaseStats;
+import dev.laakirun.veyloria.common.network.VeyloriaNetwork;
 import java.util.UUID;
 import net.minecraft.ChatFormatting;
+import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
-import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.client.gui.screens.inventory.InventoryScreen;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.network.chat.Component;
-import net.minecraft.world.item.ItemStack;
-import net.minecraft.world.item.component.CustomData;
+import net.minecraft.world.InteractionHand;
+import net.minecraft.world.InteractionResult;
 import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.UseAnim;
+import net.minecraft.world.item.component.CustomData;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.neoforge.client.event.ClientChatReceivedEvent;
 import net.neoforged.neoforge.client.event.ClientPlayerNetworkEvent;
 import net.neoforged.neoforge.client.event.ClientTickEvent;
-import net.neoforged.neoforge.client.event.RenderNameTagEvent;
+import net.neoforged.neoforge.client.event.InputEvent;
 import net.neoforged.neoforge.client.event.RenderGuiLayerEvent;
+import net.neoforged.neoforge.client.event.RenderNameTagEvent;
+import net.neoforged.neoforge.client.event.ScreenEvent;
 import net.neoforged.neoforge.client.gui.VanillaGuiLayers;
 import net.neoforged.neoforge.event.entity.player.ItemTooltipEvent;
+import org.lwjgl.glfw.GLFW;
 
 @EventBusSubscriber(modid = VeyloriaConstants.MOD_ID, value = Dist.CLIENT)
 public final class VeyloriaClientEvents {
@@ -31,19 +42,25 @@ public final class VeyloriaClientEvents {
     @SubscribeEvent
     public static void onLogin(ClientPlayerNetworkEvent.LoggingIn event) {
         VeyloriaClientState.instance().reset();
+        syncUseKeyState(Minecraft.getInstance(), false);
     }
 
     @SubscribeEvent
     public static void onLogout(ClientPlayerNetworkEvent.LoggingOut event) {
         VeyloriaClientState.instance().reset();
+        syncUseKeyState(Minecraft.getInstance(), false);
     }
 
     @SubscribeEvent
     public static void onClientTick(ClientTickEvent.Post event) {
         Minecraft minecraft = Minecraft.getInstance();
         if (minecraft.player == null) {
+            VeyloriaClientState.instance().stopAutoConsumableUse();
+            syncUseKeyState(minecraft, false);
             return;
         }
+        syncAutoConsumableUse(minecraft);
+        minecraft.player.getInventory().selected = PlayerLoadoutData.ACTIVE_MIRROR_INVENTORY_SLOT;
         VeyloriaClientState.instance().prune(minecraft.player.tickCount);
     }
 
@@ -84,7 +101,8 @@ public final class VeyloriaClientEvents {
             event.getToolTip().add(Component.literal("Тип оружия: " + weaponLabel(itemData.weaponType())));
             if (itemData.aoeChance() > 0.0D && itemData.aoeTargets() > 0) {
                 int percent = (int) Math.round(itemData.aoeChance() * 100.0D);
-                event.getToolTip().add(Component.literal("Шанс АоЕ: " + percent + "%, целей: " + itemData.aoeTargets()).withStyle(ChatFormatting.GOLD));
+                event.getToolTip().add(Component.literal("Шанс AOE: " + percent + "%, целей: " + itemData.aoeTargets())
+                    .withStyle(ChatFormatting.GOLD));
             }
             if (itemData.homingChance() > 0.0D) {
                 int percent = (int) Math.round(itemData.homingChance() * 100.0D);
@@ -111,20 +129,23 @@ public final class VeyloriaClientEvents {
             || event.getName().equals(VanillaGuiLayers.EXPERIENCE_LEVEL)
             || event.getName().equals(VanillaGuiLayers.PLAYER_HEALTH)
             || event.getName().equals(VanillaGuiLayers.ARMOR_LEVEL)
-            || event.getName().equals(VanillaGuiLayers.FOOD_LEVEL)) {
+            || event.getName().equals(VanillaGuiLayers.FOOD_LEVEL)
+            || event.getName().equals(VanillaGuiLayers.HOTBAR)
+            || event.getName().equals(VanillaGuiLayers.SELECTED_ITEM_NAME)) {
             event.setCanceled(true);
         }
     }
 
     @SubscribeEvent
     public static void onRenderHud(RenderGuiLayerEvent.Post event) {
-        if (!event.getName().equals(VanillaGuiLayers.HOTBAR)) {
+        if (!event.getName().equals(VanillaGuiLayers.CROSSHAIR)) {
             return;
         }
         Minecraft minecraft = Minecraft.getInstance();
         if (minecraft.options.hideGui || minecraft.player == null) {
             return;
         }
+
         GuiGraphics guiGraphics = event.getGuiGraphics();
         int width = minecraft.getWindow().getGuiScaledWidth();
         int height = minecraft.getWindow().getGuiScaledHeight();
@@ -142,26 +163,74 @@ public final class VeyloriaClientEvents {
         }
 
         drawBar(guiGraphics, barX, hpY, barWidth, barHeight, hpCurrent, hpMax, 0xFFB02020);
-        String hpText = "HP " + Math.max(0, hpCurrent) + "/" + Math.max(1, hpMax);
-        guiGraphics.drawCenteredString(minecraft.font, hpText, width / 2, hpY - 9, 0xFF5050);
+        guiGraphics.drawCenteredString(minecraft.font, "HP " + Math.max(0, hpCurrent) + "/" + Math.max(1, hpMax), width / 2, hpY - 9, 0xFF5050);
 
         int mana = VeyloriaClientState.instance().mana();
         int manaMax = VeyloriaClientState.instance().manaMax();
         if (manaMax > 0) {
             drawBar(guiGraphics, barX, manaY, barWidth, barHeight, mana, manaMax, 0xFF2B7CCF);
-            String manaText = "MP " + mana + "/" + manaMax;
-            guiGraphics.drawCenteredString(minecraft.font, manaText, width / 2, manaY - 9, 0x55B8FF);
+            guiGraphics.drawCenteredString(minecraft.font, "MP " + mana + "/" + manaMax, width / 2, manaY - 9, 0x55B8FF);
         }
+
         int armorValue = Math.max(0, minecraft.player.getArmorValue());
         guiGraphics.drawString(minecraft.font, "Ур. " + minecraft.player.experienceLevel, 12, hpY - 1, 0xF0F0F0, false);
         guiGraphics.drawString(minecraft.font, "Броня: " + armorValue, 12, hpY + 9, 0xD0D0D0, false);
-        guiGraphics.drawString(minecraft.font, "Медь: " + VeyloriaClientState.instance().copper(), width - 110, hpY - 1, 0xF0A040, false);
+        guiGraphics.drawString(minecraft.font, "Медь: " + VeyloriaClientState.instance().copper(), width - 116, 12, 0xF0A040, false);
 
         int notificationBaseY = manaMax > 0 ? hpY - 24 : hpY - 14;
         int index = 0;
         for (VeyloriaClientState.Notification notification : VeyloriaClientState.instance().notifications()) {
             guiGraphics.drawCenteredString(minecraft.font, notification.text(), width / 2, notificationBaseY - index * 10, 0xFFFFFF);
             index++;
+        }
+
+        drawLoadoutHud(minecraft, guiGraphics, width, height);
+    }
+
+    @SubscribeEvent
+    public static void onInventoryOpening(ScreenEvent.Opening event) {
+        if (!(event.getNewScreen() instanceof InventoryScreen)) {
+            return;
+        }
+        Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft.player == null || minecraft.getConnection() == null) {
+            return;
+        }
+        event.setCanceled(true);
+        minecraft.getConnection().send(new VeyloriaNetwork.OpenInventoryPayload());
+    }
+
+    @SubscribeEvent
+    public static void onMouseScroll(InputEvent.MouseScrollingEvent event) {
+        Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft.player == null || minecraft.screen != null) {
+            return;
+        }
+        event.setCanceled(true);
+        minecraft.player.getInventory().selected = PlayerLoadoutData.ACTIVE_MIRROR_INVENTORY_SLOT;
+    }
+
+    @SubscribeEvent
+    public static void onKeyInput(InputEvent.Key event) {
+        if (event.getAction() != GLFW.GLFW_PRESS) {
+            return;
+        }
+        Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft.player == null || minecraft.screen != null) {
+            return;
+        }
+
+        int weaponSlot = weaponSlotForKey(event.getKey());
+        if (weaponSlot >= 0) {
+            sendActionSlotSelection(weaponSlot);
+        } else {
+            int consumableSlot = consumableSlotForKey(event.getKey());
+            if (consumableSlot >= 0) {
+                useConsumableSlot(consumableSlot);
+            }
+        }
+        if (event.getKey() >= GLFW.GLFW_KEY_1 && event.getKey() <= GLFW.GLFW_KEY_9) {
+            minecraft.player.getInventory().selected = PlayerLoadoutData.ACTIVE_MIRROR_INVENTORY_SLOT;
         }
     }
 
@@ -200,8 +269,21 @@ public final class VeyloriaClientEvents {
     private static void handleMarker(String marker) {
         VeyloriaClientState state = VeyloriaClientState.instance();
         if (marker.startsWith("[veyloria:profile]")) {
-            state.setCopper(parseInt(fieldValue(marker, "copper")));
-            state.setMana(parseInt(fieldValue(marker, "mana")), parseInt(fieldValue(marker, "manaMax")));
+            state.setProfile(
+                parseInt(fieldValue(marker, "level")),
+                parseInt(fieldValue(marker, "xpCurrent")),
+                parseInt(fieldValue(marker, "xpNext")),
+                parseInt(fieldValue(marker, "copper")),
+                parseInt(fieldValue(marker, "mana")),
+                parseInt(fieldValue(marker, "manaMax")),
+                new BaseStats(
+                    parseInt(fieldValue(marker, "power")),
+                    parseInt(fieldValue(marker, "vitality")),
+                    parseInt(fieldValue(marker, "armor")),
+                    parseInt(fieldValue(marker, "crit")),
+                    parseInt(fieldValue(marker, "haste"))
+                )
+            );
             return;
         }
         if (marker.startsWith("[veyloria:bars]")) {
@@ -313,6 +395,158 @@ public final class VeyloriaClientEvents {
         if (fill > 0) {
             guiGraphics.fill(x, y, x + fill, y + height, fillColor);
         }
+    }
+
+    private static void drawLoadoutHud(Minecraft minecraft, GuiGraphics guiGraphics, int width, int height) {
+        VeyloriaClientState state = VeyloriaClientState.instance();
+        int quickX = width - 84;
+        int quickY = height - 96;
+        drawQuickSlot(guiGraphics, minecraft, quickX, quickY, PlayerLoadoutData.SLOT_CONSUMABLE_1, "4", state);
+        drawQuickSlot(guiGraphics, minecraft, quickX + 18, quickY, PlayerLoadoutData.SLOT_CONSUMABLE_2, "5", state);
+        drawQuickSlot(guiGraphics, minecraft, quickX + 36, quickY, PlayerLoadoutData.SLOT_CONSUMABLE_3, "6", state);
+        drawQuickSlot(guiGraphics, minecraft, quickX + 54, quickY, PlayerLoadoutData.SLOT_CONSUMABLE_4, "7", state);
+
+        int rowX = width - 122;
+        int rowY = height - 72;
+        drawActionRow(guiGraphics, minecraft, rowX, rowY, PlayerLoadoutData.SLOT_MAIN_WEAPON, "1", state);
+        drawActionRow(guiGraphics, minecraft, rowX, rowY + 20, PlayerLoadoutData.SLOT_SECONDARY_WEAPON, "2", state);
+        drawActionRow(guiGraphics, minecraft, rowX, rowY + 40, PlayerLoadoutData.SLOT_RANGED_WEAPON, "3", state);
+    }
+
+    private static void drawQuickSlot(GuiGraphics guiGraphics, Minecraft minecraft, int x, int y, int slot, String label,
+                                      VeyloriaClientState state) {
+        boolean active = state.activeLoadoutSlot() == slot;
+        int border = active ? 0xFFF0C55A : 0xFF617086;
+        int fill = active ? 0xA06E5412 : 0x90232B38;
+        guiGraphics.fill(x - 1, y - 1, x + 17, y + 17, border);
+        guiGraphics.fill(x, y, x + 16, y + 16, fill);
+
+        ItemStack stack = state.loadoutItem(slot);
+        if (!stack.isEmpty()) {
+            guiGraphics.renderItem(stack, x, y);
+            guiGraphics.renderItemDecorations(minecraft.font, stack, x, y);
+        }
+        guiGraphics.drawCenteredString(minecraft.font, label, x + 8, y + 19, active ? 0xF6D688 : 0xD9E2F1);
+    }
+
+    private static void drawActionRow(GuiGraphics guiGraphics, Minecraft minecraft, int x, int y, int slot, String label,
+                                      VeyloriaClientState state) {
+        boolean active = state.activeLoadoutSlot() == slot;
+        int border = active ? 0xFFF0C55A : 0xFF617086;
+        int fill = active ? 0xA06E5412 : 0x90232B38;
+        guiGraphics.fill(x - 1, y - 1, x + 111, y + 19, border);
+        guiGraphics.fill(x, y, x + 110, y + 18, fill);
+        guiGraphics.fill(x + 92, y, x + 110, y + 18, active ? 0xB0836518 : 0xA0343D4A);
+        guiGraphics.drawCenteredString(minecraft.font, label, x + 101, y + 5, active ? 0xFFF4C66B : 0xFFE0E7F3);
+
+        ItemStack stack = state.loadoutItem(slot);
+        if (stack.isEmpty()) {
+            return;
+        }
+        guiGraphics.renderItem(stack, x + 2, y + 1);
+        guiGraphics.renderItemDecorations(minecraft.font, stack, x + 2, y + 1);
+        String name = minecraft.font.plainSubstrByWidth(stack.getHoverName().getString(), 62);
+        guiGraphics.drawString(minecraft.font, name, x + 24, y + 5, 0xF3F5F7, false);
+    }
+
+    private static int weaponSlotForKey(int keyCode) {
+        return switch (keyCode) {
+            case GLFW.GLFW_KEY_1 -> PlayerLoadoutData.SLOT_MAIN_WEAPON;
+            case GLFW.GLFW_KEY_2 -> PlayerLoadoutData.SLOT_SECONDARY_WEAPON;
+            case GLFW.GLFW_KEY_3 -> PlayerLoadoutData.SLOT_RANGED_WEAPON;
+            default -> -1;
+        };
+    }
+
+    private static int consumableSlotForKey(int keyCode) {
+        return switch (keyCode) {
+            case GLFW.GLFW_KEY_4 -> PlayerLoadoutData.SLOT_CONSUMABLE_1;
+            case GLFW.GLFW_KEY_5 -> PlayerLoadoutData.SLOT_CONSUMABLE_2;
+            case GLFW.GLFW_KEY_6 -> PlayerLoadoutData.SLOT_CONSUMABLE_3;
+            case GLFW.GLFW_KEY_7 -> PlayerLoadoutData.SLOT_CONSUMABLE_4;
+            default -> -1;
+        };
+    }
+
+    private static void sendActionSlotSelection(int actionSlot) {
+        Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft.getConnection() == null) {
+            return;
+        }
+        minecraft.getConnection().send(new VeyloriaNetwork.SelectActionSlotPayload(actionSlot));
+        if (minecraft.player != null) {
+            minecraft.player.getInventory().selected = PlayerLoadoutData.ACTIVE_MIRROR_INVENTORY_SLOT;
+        }
+    }
+
+    private static void useConsumableSlot(int consumableSlot) {
+        Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft.getConnection() == null) {
+            return;
+        }
+        minecraft.getConnection().send(new VeyloriaNetwork.UseConsumablePayload(consumableSlot));
+        if (minecraft.player != null) {
+            minecraft.player.getInventory().selected = PlayerLoadoutData.ACTIVE_MIRROR_INVENTORY_SLOT;
+        }
+    }
+
+    private static void syncAutoConsumableUse(Minecraft minecraft) {
+        VeyloriaClientState state = VeyloriaClientState.instance();
+        if (!state.isAutoUsingConsumable() || minecraft.player == null || minecraft.gameMode == null) {
+            syncUseKeyState(minecraft, false);
+            return;
+        }
+
+        boolean forceUseKey = false;
+        ItemStack offhand = minecraft.player.getOffhandItem();
+        ItemStack expected = state.loadoutItem(state.autoConsumableSlot());
+
+        if (minecraft.player.isUsingItem() && minecraft.player.getUsedItemHand() == InteractionHand.OFF_HAND) {
+            forceUseKey = true;
+        } else if (!offhand.isEmpty() && matchesAutoConsumable(offhand, expected)) {
+            InteractionResult result = minecraft.gameMode.useItem(minecraft.player, InteractionHand.OFF_HAND);
+            forceUseKey = result.consumesAction()
+                || (minecraft.player.isUsingItem() && minecraft.player.getUsedItemHand() == InteractionHand.OFF_HAND);
+        } else if (offhand.isEmpty()) {
+            state.stopAutoConsumableUse();
+        }
+
+        if (!forceUseKey && !minecraft.player.isUsingItem() && minecraft.player.getOffhandItem().isEmpty()) {
+            state.stopAutoConsumableUse();
+        }
+
+        syncUseKeyState(minecraft, forceUseKey && state.isAutoUsingConsumable());
+    }
+
+    private static void syncUseKeyState(Minecraft minecraft, boolean forceDown) {
+        if (minecraft == null) {
+            return;
+        }
+        KeyMapping keyUse = minecraft.options.keyUse;
+        keyUse.setDown(forceDown || isPhysicalKeyDown(minecraft, keyUse));
+    }
+
+    private static boolean isPhysicalKeyDown(Minecraft minecraft, KeyMapping keyMapping) {
+        if (minecraft == null || keyMapping == null) {
+            return false;
+        }
+        InputConstants.Key key = keyMapping.getKey();
+        long window = minecraft.getWindow().getWindow();
+        return switch (key.getType()) {
+            case KEYSYM, SCANCODE -> InputConstants.isKeyDown(window, key.getValue());
+            case MOUSE -> GLFW.glfwGetMouseButton(window, key.getValue()) == GLFW.GLFW_PRESS;
+        };
+    }
+
+    private static boolean matchesAutoConsumable(ItemStack offhand, ItemStack expected) {
+        if (offhand.isEmpty()) {
+            return false;
+        }
+        if (!expected.isEmpty()) {
+            return ItemStack.isSameItemSameComponents(offhand, expected);
+        }
+        UseAnim animation = offhand.getUseAnimation();
+        return animation == UseAnim.EAT || animation == UseAnim.DRINK;
     }
 
     private static String rarityName(RpgItemData data) {

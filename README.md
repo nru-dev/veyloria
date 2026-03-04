@@ -1,3 +1,11 @@
+## Inventory Update
+
+- The custom inventory now uses 17 loadout slots: `1/2/3` for weapons, `4/5/6/7` for consumables, `ammo`, and player equipment slots for helmet, chest, legs, boots, pendant, two rings, and two accessories.
+- The inventory screen was rebuilt around a shared layout: top-right copper counter, center paper-doll, stat card for `Power/Vitality/Armor/Crit/Haste`, and corrected slot alignment between the visual frame and the real menu coordinates.
+- The bottom-right HUD still mirrors the combat loadout with three weapon rows and four consumable quick slots. Empty HUD slots keep the frame and key label, but do not render an item icon.
+- Number keys `1/2/3` switch weapons, while `4/5/6/7` instantly use the consumable from that slot through a server-authoritative offhand auto-use flow that keeps the standard vanilla eating/drinking animation until finish.
+- Stat bonuses now apply as soon as an item is placed into an equipped loadout slot, including non-active weapon slots. Consumables do not grant passive stats, and ammo is reserved for arrows or future custom ammo items.
+
 # Veyloria MVP
 
 MVP RPG-мод для Minecraft `1.21.1` на `NeoForge`, где сервер хранит аккаунты, профили, мобов, спавны, лут и прогрессию 1-80.
@@ -22,6 +30,11 @@ MVP RPG-мод для Minecraft `1.21.1` на `NeoForge`, где сервер х
 - seed-контент из ресурсов: 38 кастомных мобов, 93 spawn groups, 22 loot tables
 - дроп экипировки реализован серверно (редкости, уровни предметов, оружие/броня, спецэффекты)
 - мана активна только когда у игрока экипировано оружие, которое реально её использует (например, палочка); иначе `MP=0`
+- кастомный инвентарь заменяет vanilla inventory и hotbar:
+  - слева слоты `основное/дополнительное/дальний бой` и броня
+  - справа обычное хранилище игрока
+  - переключение активного оружия на `1/2/3`
+  - vanilla toolbar скрыт и больше не используется
 - для не-OP игроков запрещены строительство/ломание блоков (Adventure + серверные блокировки)
 - добавлены команды: `/veyloria rates ...` (OP only, runtime-only) и расширенный набор команд группы `/party` + алиас `/p`
 

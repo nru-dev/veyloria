@@ -1,3 +1,11 @@
+## 2026-03-04 Inventory Addendum
+
+- The custom loadout was expanded from the first 11 slots to 17 slots by appending new equipment entries instead of renumbering existing ones. This preserves already-saved player loadouts and avoids NBT migration for weapon, armor, boots, and consumable items that were already stored.
+- The new loadout shape is: three weapon slots, four consumable slots, helmet/chest/legs/boots, pendant, two rings, two accessories, and one ammo slot for arrows or future `EquipSlot.AMMO` items.
+- Weapon selection remains on `1/2/3`, while consumables on `4/5/6/7` are instant-use actions executed through a server-authoritative offhand auto-use path. The server validates the slot and mirrors the item into offhand, while the client keeps vanilla `use` held long enough for eating/drinking to complete without manual RMB hold.
+- Passive stat aggregation now reads directly from equipped loadout slots instead of only the currently held weapon plus mirrored armor. This makes sword, bow, and other equipped weapon bonuses apply immediately even when that weapon is not the active one in hand.
+- The custom inventory menu and screen now share one layout definition so slot frames, click targets, and storage rows stay aligned as the screen evolves.
+
 # Veyloria MVP Decisions
 
 ## 2026-03-04
@@ -31,3 +39,4 @@
 - В бою добавлены threat-сумма по игрокам и retarget на лидера угрозы; при выходе моба за leash-radius включается evade (возврат на спавн + полный heal).
 - Для чтения состояния группы без отдельного GUI добавлены надголовные бары ресурсов (`HP` + `MP`) через расширение name-tag рендера на клиенте; значения синхронизируются сервером скрытыми системными маркерами.
 - Мана ограничена по экипировке: сервер учитывает/регенерирует `MP` только если в руках есть оружие с `manaCost > 0` (например, палочка). При смене на немана-оружие `MP` принудительно становится `0`.
+- Vanilla inventory/hotbar выведены из пользовательского UX: вместо них используется собственный screen/menu с loadout-слотами (`main`, `secondary`, `ranged`, `helmet`, `chest`, `legs`, `boots`) и правой секцией storage. Для совместимости с vanilla боёвкой и рендером активное оружие зеркалится в скрытый `inventory slot 0`, а броня — в стандартные armor slots.

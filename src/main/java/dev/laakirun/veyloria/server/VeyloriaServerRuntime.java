@@ -15,6 +15,7 @@ import dev.laakirun.veyloria.server.game.ItemFactory;
 import dev.laakirun.veyloria.server.game.LootService;
 import dev.laakirun.veyloria.server.game.MobSpawnService;
 import dev.laakirun.veyloria.server.game.PartyService;
+import dev.laakirun.veyloria.server.game.PlayerLoadoutService;
 import dev.laakirun.veyloria.server.game.PlayerStatService;
 import dev.laakirun.veyloria.server.game.TestWorldLayoutService;
 import dev.laakirun.veyloria.server.profile.CharacterService;
@@ -39,6 +40,7 @@ public final class VeyloriaServerRuntime {
     private TestWorldLayoutService testWorldLayoutService;
     private PartyService partyService;
     private GearDropService gearDropService;
+    private PlayerLoadoutService playerLoadoutService;
 
     private VeyloriaServerRuntime() {
     }
@@ -68,6 +70,7 @@ public final class VeyloriaServerRuntime {
         this.testWorldLayoutService = new TestWorldLayoutService();
         this.partyService = new PartyService();
         this.gearDropService = new GearDropService();
+        this.playerLoadoutService = new PlayerLoadoutService();
     }
 
     public ServerConfig serverConfig() {
@@ -140,5 +143,9 @@ public final class VeyloriaServerRuntime {
 
     public GearDropService gearDropService() {
         return gearDropService;
+    }
+
+    public PlayerLoadoutService playerLoadoutService() {
+        return playerLoadoutService;
     }
 }

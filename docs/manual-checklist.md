@@ -1,3 +1,16 @@
+## Inventory Update Addendum
+
+1. Open the custom inventory with `E` and verify the rebuilt screen shows a top-right copper counter, a player paper-doll, and a stat card for `Power`, `Vitality`, `Armor`, `Crit`, and `Haste`.
+2. Verify the player loadout slots exist for `1/2/3` weapons, `4/5/6/7` consumables, `ammo`, helmet, chest, legs, boots, pendant, two rings, and two accessories.
+3. Put arrows into the new ammo slot and verify they stack there instead of behaving like single-count equipment.
+4. Put stackable consumables into the `4/5/6/7` slots and verify they stay stackable instead of collapsing to single-count equipment behavior.
+5. Close the inventory and verify the bottom-right HUD still shows weapon rows `1/2/3` plus consumable quick slots `4/5/6/7`.
+6. Verify that empty HUD slots do not render item icons, while filled slots render the correct icon and stack count.
+7. Change active weapons with `1`, `2`, and `3` and confirm the weapon HUD keeps the normal fixed `1/2/3` order.
+8. Press `4`, `5`, `6`, and `7` in gameplay and confirm the consumable moves to offhand, starts the standard vanilla eating/drinking animation immediately, and finishes without requiring RMB hold.
+9. Put a stat-bearing weapon into a non-active slot such as `2` or `3` and verify the stat card updates immediately even before switching to that weapon.
+10. Shift-click and drag items between backpack and loadout, then verify the slot frame positions and actual click targets are aligned and no rows appear shifted.
+
 # Manual Checklist
 
 ## Вход и спавн
@@ -9,13 +22,21 @@
 
 ## Профиль и HUD
 
-1. После входа проверить, что exp bar показывает RPG-уровень/прогресс.
-2. Проверить отображение `Copper` в HUD.
-3. Взять в руки палочку/мана-оружие и убедиться, что в HUD показывается `Мана: X/Y`.
-4. Сменить оружие на немана-тип (меч/топор/лук) и убедиться, что мана в HUD скрывается.
-5. Подойти к другому игроку и проверить над головой оба бара (`HP` и `MP`), обновление значений при получении урона/лечении.
-6. Изменить `xp_rate` на `100` и перезапустить сервер.
-7. Убедиться, что темп роста EXP изменился без изменения валюты/лута.
+1. Нажать `E` и убедиться, что открывается кастомный инвентарь, а не vanilla inventory screen.
+2. Проверить layout:
+   - слева видны слоты `1/2/3` для оружия и слоты брони,
+   - справа видны storage-слоты игрока,
+   - vanilla hotbar внизу экрана отсутствует.
+3. Положить melee-оружие в слот `1` или `2`, ranged-оружие (лук/палочка) в слот `3`.
+4. Закрыть инвентарь и проверить переключение активного оружия клавишами `1`, `2`, `3`.
+5. Убедиться, что при переключении меняется предмет в руке, а tooltip vanilla hotbar не появляется.
+6. После входа проверить, что exp bar показывает RPG-уровень/прогресс.
+7. Проверить отображение `Copper` в HUD.
+8. Взять в руки палочку/мана-оружие и убедиться, что в HUD показывается `Мана: X/Y`.
+9. Сменить оружие на немана-тип (меч/топор/лук) и убедиться, что мана в HUD скрывается.
+10. Подойти к другому игроку и проверить над головой оба бара (`HP` и `MP`), обновление значений при получении урона/лечении.
+11. Изменить `xp_rate` на `100` и перезапустить сервер.
+12. Убедиться, что темп роста EXP изменился без изменения валюты/лута.
 
 ## Мобы и бой
 

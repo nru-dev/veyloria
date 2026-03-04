@@ -1,25 +1,29 @@
 package dev.laakirun.veyloria.server.game;
 
+import dev.laakirun.veyloria.common.item.PlayerLoadoutData;
 import dev.laakirun.veyloria.common.item.RpgItemData;
 import dev.laakirun.veyloria.common.model.BaseStats;
 import dev.laakirun.veyloria.common.model.CharacterProfile;
-import net.minecraft.core.component.DataComponents;
-import net.minecraft.world.item.component.CustomData;
 import dev.laakirun.veyloria.server.VeyloriaServerRuntime;
-import net.minecraft.world.entity.EquipmentSlot;
+import net.minecraft.core.component.DataComponents;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.component.CustomData;
+import net.minecraft.server.level.ServerPlayer;
 
 public final class PlayerStatService {
     public BaseStats totalStats(Player player, CharacterProfile profile) {
         BaseStats total = scaledProfileStats(profile);
-        total = total.add(read(player.getMainHandItem()));
-        total = total.add(read(player.getOffhandItem()));
-        total = total.add(read(player.getItemBySlot(EquipmentSlot.HEAD)));
-        total = total.add(read(player.getItemBySlot(EquipmentSlot.CHEST)));
-        total = total.add(read(player.getItemBySlot(EquipmentSlot.LEGS)));
-        total = total.add(read(player.getItemBySlot(EquipmentSlot.FEET)));
-        return total;
+        if (player instanceof ServerPlayer serverPlayer) {
+            PlayerLoadoutData loadout = VeyloriaServerRuntime.instance().playerLoadoutService().loadout(serverPlayer);
+            for (int slot = 0; slot < PlayerLoadoutData.SLOT_COUNT; slot++) {
+                if (PlayerLoadoutData.contributesToStats(slot)) {
+                    total = total.add(read(loadout.getItem(slot)));
+                }
+            }
+            return total;
+        }
+        return total.add(read(player.getMainHandItem()));
     }
 
     public double computePlayerDamage(Player player, CharacterProfile profile) {
