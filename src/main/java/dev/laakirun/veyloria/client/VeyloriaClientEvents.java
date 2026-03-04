@@ -108,7 +108,9 @@ public final class VeyloriaClientEvents {
     @SubscribeEvent
     public static void onRenderHudPre(RenderGuiLayerEvent.Pre event) {
         if (event.getName().equals(VanillaGuiLayers.EXPERIENCE_BAR)
-            || event.getName().equals(VanillaGuiLayers.EXPERIENCE_LEVEL)) {
+            || event.getName().equals(VanillaGuiLayers.EXPERIENCE_LEVEL)
+            || event.getName().equals(VanillaGuiLayers.PLAYER_HEALTH)
+            || event.getName().equals(VanillaGuiLayers.FOOD_LEVEL)) {
             event.setCanceled(true);
         }
     }
