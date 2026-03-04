@@ -1,0 +1,123 @@
+[
+  {
+    "code": "wolf_pelt",
+    "name": "Wolf Pelt",
+    "item_category": "resource",
+    "vanilla_icon_item": "minecraft:rabbit_hide",
+    "model_id": null,
+    "stackable": true,
+    "max_stack": 64,
+    "required_level": 1,
+    "rarity": "common",
+    "equip_slot": null,
+    "base_stats_json": {},
+    "vendor_value": 4,
+    "enabled": true
+  },
+  {
+    "code": "bone_shard",
+    "name": "Bone Shard",
+    "item_category": "resource",
+    "vanilla_icon_item": "minecraft:bone",
+    "model_id": null,
+    "stackable": true,
+    "max_stack": 64,
+    "required_level": 1,
+    "rarity": "common",
+    "equip_slot": null,
+    "base_stats_json": {},
+    "vendor_value": 5,
+    "enabled": true
+  },
+  {
+    "code": "traveler_sword",
+    "name": "Traveler Sword",
+    "item_category": "equipment",
+    "vanilla_icon_item": "minecraft:iron_sword",
+    "model_id": null,
+    "stackable": false,
+    "max_stack": 1,
+    "required_level": 1,
+    "rarity": "common",
+    "equip_slot": "weapon",
+    "base_stats_json": {
+      "power": 4,
+      "vitality": 0,
+      "armor": 0
+    },
+    "vendor_value": 24,
+    "enabled": true
+  },
+  {
+    "code": "hunter_cap",
+    "name": "Hunter Cap",
+    "item_category": "equipment",
+    "vanilla_icon_item": "minecraft:leather_helmet",
+    "model_id": null,
+    "stackable": false,
+    "max_stack": 1,
+    "required_level": 3,
+    "rarity": "common",
+    "equip_slot": "helmet",
+    "base_stats_json": {
+      "power": 0,
+      "vitality": 1,
+      "armor": 2
+    },
+    "vendor_value": 22,
+    "enabled": true
+  },
+  {
+    "code": "warden_plate",
+    "name": "Warden Plate",
+    "item_category": "equipment",
+    "vanilla_icon_item": "minecraft:iron_chestplate",
+    "model_id": null,
+    "stackable": false,
+    "max_stack": 1,
+    "required_level": 9,
+    "rarity": "rare",
+    "equip_slot": "chest",
+    "base_stats_json": {
+      "power": 0,
+      "vitality": 3,
+      "armor": 6
+    },
+    "vendor_value": 80,
+    "enabled": true
+  },
+  {
+    "code": "stormcaller_blade",
+    "name": "Stormcaller Blade",
+    "item_category": "equipment",
+    "vanilla_icon_item": "minecraft:diamond_sword",
+    "model_id": null,
+    "stackable": false,
+    "max_stack": 1,
+    "required_level": 10,
+    "rarity": "epic",
+    "equip_slot": "weapon",
+    "base_stats_json": {
+      "power": 9,
+      "vitality": 2,
+      "armor": 0
+    },
+    "vendor_value": 140,
+    "enabled": true
+  },
+  {
+    "code": "boss_emblem",
+    "name": "Boss Emblem",
+    "item_category": "consumable",
+    "vanilla_icon_item": "minecraft:gold_nugget",
+    "model_id": null,
+    "stackable": true,
+    "max_stack": 16,
+    "required_level": 1,
+    "rarity": "rare",
+    "equip_slot": null,
+    "base_stats_json": {},
+    "vendor_value": 30,
+    "enabled": true
+  }
+]

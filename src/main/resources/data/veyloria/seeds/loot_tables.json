@@ -1,0 +1,6 @@
+[
+  { "name": "starter_wolves", "drop_slots": 2 },
+  { "name": "graveyard_undead", "drop_slots": 2 },
+  { "name": "elite_camp", "drop_slots": 3 },
+  { "name": "boss_warlord", "drop_slots": 4 }
+]

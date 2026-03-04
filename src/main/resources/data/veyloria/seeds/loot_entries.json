@@ -1,0 +1,13 @@
+[
+  { "loot_table": "starter_wolves", "item_template": "wolf_pelt", "drop_weight": 40, "min_quantity": 1, "max_quantity": 3, "is_guaranteed": false, "enabled": true },
+  { "loot_table": "starter_wolves", "item_template": "traveler_sword", "drop_weight": 2, "min_quantity": 1, "max_quantity": 1, "is_guaranteed": false, "enabled": true },
+  { "loot_table": "graveyard_undead", "item_template": "bone_shard", "drop_weight": 45, "min_quantity": 1, "max_quantity": 4, "is_guaranteed": false, "enabled": true },
+  { "loot_table": "graveyard_undead", "item_template": "hunter_cap", "drop_weight": 5, "min_quantity": 1, "max_quantity": 1, "is_guaranteed": false, "enabled": true },
+  { "loot_table": "elite_camp", "item_template": "bone_shard", "drop_weight": 24, "min_quantity": 2, "max_quantity": 5, "is_guaranteed": false, "enabled": true },
+  { "loot_table": "elite_camp", "item_template": "warden_plate", "drop_weight": 8, "min_quantity": 1, "max_quantity": 1, "is_guaranteed": false, "enabled": true },
+  { "loot_table": "elite_camp", "item_template": "hunter_cap", "drop_weight": 15, "min_quantity": 1, "max_quantity": 1, "is_guaranteed": false, "enabled": true },
+  { "loot_table": "boss_warlord", "item_template": "boss_emblem", "drop_weight": 1, "min_quantity": 1, "max_quantity": 1, "is_guaranteed": true, "enabled": true },
+  { "loot_table": "boss_warlord", "item_template": "warden_plate", "drop_weight": 18, "min_quantity": 1, "max_quantity": 1, "is_guaranteed": false, "enabled": true },
+  { "loot_table": "boss_warlord", "item_template": "stormcaller_blade", "drop_weight": 6, "min_quantity": 1, "max_quantity": 1, "is_guaranteed": false, "enabled": true },
+  { "loot_table": "boss_warlord", "item_template": "bone_shard", "drop_weight": 24, "min_quantity": 3, "max_quantity": 6, "is_guaranteed": false, "enabled": true }
+]

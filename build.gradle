@@ -13,6 +13,7 @@ version = mod_version
 group = mod_group_id
 
 repositories {
+    mavenCentral()
 }
 
 base {
@@ -88,6 +89,33 @@ sourceSets.main.resources {
 }
 
 sourceSets.main.resources.srcDir generateModMetadata
+
+dependencies {
+    implementation('org.xerial:sqlite-jdbc:3.49.1.0')
+    implementation('org.yaml:snakeyaml:2.4')
+
+    jarJar('org.xerial:sqlite-jdbc:3.49.1.0') {
+        version {
+            strictly '[3.49.1.0]'
+            prefer '3.49.1.0'
+        }
+    }
+    jarJar('org.yaml:snakeyaml:2.4') {
+        version {
+            strictly '[2.4]'
+            prefer '2.4'
+        }
+    }
+
+    testImplementation platform('org.junit:junit-bom:5.12.0')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+tasks.withType(Test).configureEach {
+    useJUnitPlatform()
+}
 
 publishing {
     publications {

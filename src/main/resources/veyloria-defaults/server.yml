@@ -1,0 +1,14 @@
+database_path: data/veyloria/rpg.db
+seed_path: data/veyloria/seeds
+migration_path: data/veyloria/migrations
+spawn_tick_interval: 20
+spawn_activation_radius: 96
+auth_lock_tick_interval: 1
+max_active_mobs_per_dimension: 96
+combat:
+  player_base_damage: 4.0
+  player_base_health: 20.0
+  vitality_health_bonus: 4.0
+  armor_damage_reduction_factor: 0.035
+  crit_multiplier: 1.5
+  crit_base_chance: 0.02

@@ -1,16 +1,39 @@
 package dev.laakirun.veyloria;
 
 import com.mojang.logging.LogUtils;
+import dev.laakirun.veyloria.common.VeyloriaConstants;
+import dev.laakirun.veyloria.common.registry.VeyloriaAttachments;
+import dev.laakirun.veyloria.server.VeyloriaServerRuntime;
+import dev.laakirun.veyloria.server.config.ConfigService;
+import dev.laakirun.veyloria.server.game.VeyloriaServerEvents;
 import net.neoforged.bus.api.IEventBus;
+import net.neoforged.bus.api.SubscribeEvent;
+import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.fml.common.Mod;
+import net.neoforged.neoforge.common.NeoForge;
+import net.neoforged.neoforge.event.server.ServerStartingEvent;
 import org.slf4j.Logger;
 
-@Mod(VeyloriaMod.MOD_ID)
+@Mod(VeyloriaConstants.MOD_ID)
 public final class VeyloriaMod {
-    public static final String MOD_ID = "veyloria";
     private static final Logger LOGGER = LogUtils.getLogger();
 
     public VeyloriaMod(IEventBus modEventBus) {
-        LOGGER.info("Initializing mod {}", MOD_ID);
+        VeyloriaAttachments.register(modEventBus);
+        NeoForge.EVENT_BUS.register(ServerEvents.class);
+        VeyloriaServerEvents.register();
+        LOGGER.info("Initializing mod {}", VeyloriaConstants.MOD_ID);
+    }
+
+    @EventBusSubscriber(modid = VeyloriaConstants.MOD_ID)
+    public static final class ServerEvents {
+        private ServerEvents() {
+        }
+
+        @SubscribeEvent
+        public static void onServerStarting(ServerStartingEvent event) {
+            ConfigService configService = new ConfigService();
+            VeyloriaServerRuntime.instance().initialize(configService.loadServerConfig(), configService.loadRatesConfig());
+        }
     }
 }
