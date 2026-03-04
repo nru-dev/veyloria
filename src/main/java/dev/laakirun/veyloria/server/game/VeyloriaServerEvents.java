@@ -123,15 +123,8 @@ public final class VeyloriaServerEvents {
                                 })))))
         );
 
-        event.getDispatcher().register(
-            LiteralArgumentBuilder.<CommandSourceStack>literal("party")
-                .then(Commands.argument("nickname", StringArgumentType.word())
-                    .executes(context -> {
-                        ServerPlayer player = context.getSource().getPlayerOrException();
-                        String nickname = StringArgumentType.getString(context, "nickname");
-                        return invitePartyMember(player, nickname);
-                    }))
-        );
+        registerPartyAlias(event, "party");
+        registerPartyAlias(event, "p");
     }
 
     @SubscribeEvent
@@ -502,21 +495,152 @@ public final class VeyloriaServerEvents {
         return 1;
     }
 
-    private int invitePartyMember(ServerPlayer owner, String nickname) {
-        if (!VeyloriaServerRuntime.instance().authService().sessionManager().isAuthenticated(owner.getUUID())) {
-            return 0;
-        }
-        ServerPlayer target = owner.getServer().getPlayerList().getPlayerByName(nickname);
-        if (target == null || target.getUUID().equals(owner.getUUID())) {
-            return 0;
-        }
-        if (!VeyloriaServerRuntime.instance().authService().sessionManager().isAuthenticated(target.getUUID())) {
-            return 0;
-        }
-        PartyService.PartyUpdateResult result = VeyloriaServerRuntime.instance().partyService().addMember(owner.getUUID(), target.getUUID());
-        owner.sendSystemMessage(Component.literal("Группа обновлена: участников=" + result.memberCount()));
-        target.sendSystemMessage(Component.literal("Вы вступили в группу с " + owner.getGameProfile().getName()));
+    private void registerPartyAlias(RegisterCommandsEvent event, String command) {
+        event.getDispatcher().register(
+            LiteralArgumentBuilder.<CommandSourceStack>literal(command)
+                .executes(context -> partyHelp(context.getSource().getPlayerOrException()))
+                .then(Commands.literal("help")
+                    .executes(context -> partyHelp(context.getSource().getPlayerOrException())))
+                .then(Commands.literal("leave")
+                    .executes(context -> partyLeave(context.getSource().getPlayerOrException())))
+                .then(Commands.literal("add")
+                    .then(Commands.argument("nickname", StringArgumentType.word())
+                        .executes(context -> partyAdd(
+                            context.getSource().getPlayerOrException(),
+                            StringArgumentType.getString(context, "nickname"),
+                            true))))
+                .then(Commands.literal("kick")
+                    .then(Commands.argument("nickname", StringArgumentType.word())
+                        .executes(context -> partyKick(
+                            context.getSource().getPlayerOrException(),
+                            StringArgumentType.getString(context, "nickname")))))
+                .then(Commands.argument("nickname", StringArgumentType.word())
+                    .executes(context -> partyAdd(
+                        context.getSource().getPlayerOrException(),
+                        StringArgumentType.getString(context, "nickname"),
+                        false)))
+        );
+    }
+
+    private int partyHelp(ServerPlayer player) {
+        player.sendSystemMessage(Component.literal("Команды группы:"));
+        player.sendSystemMessage(Component.literal("/party <nickname> или /p <nickname> — добавить игрока в группу"));
+        player.sendSystemMessage(Component.literal("/party add <nickname> или /p add <nickname> — добавить игрока (только лидер)"));
+        player.sendSystemMessage(Component.literal("/party kick <nickname> или /p kick <nickname> — исключить игрока (только лидер)"));
+        player.sendSystemMessage(Component.literal("/party leave или /p leave — выйти из группы"));
+        player.sendSystemMessage(Component.literal("/party help или /p help — показать эту справку"));
         return 1;
+    }
+
+    private int partyAdd(ServerPlayer requester, String nickname, boolean requireExistingParty) {
+        if (!isAuthenticated(requester)) {
+            return 0;
+        }
+        if (requireExistingParty && !VeyloriaServerRuntime.instance().partyService().isLeader(requester.getUUID())) {
+            if (VeyloriaServerRuntime.instance().partyService().leaderOf(requester.getUUID()) == null) {
+                requester.sendSystemMessage(Component.literal("Вы не состоите в группе. Сначала создайте группу через /party <nickname>"));
+            } else {
+                requester.sendSystemMessage(Component.literal("Только лидер группы может добавлять игроков"));
+            }
+            return 0;
+        }
+        ServerPlayer target = requester.getServer().getPlayerList().getPlayerByName(nickname);
+        if (target == null) {
+            requester.sendSystemMessage(Component.literal("Игрок не найден в онлайне"));
+            return 0;
+        }
+        if (!isAuthenticated(target)) {
+            requester.sendSystemMessage(Component.literal("Игрок не авторизован"));
+            return 0;
+        }
+        PartyService.PartyUpdateResult result = VeyloriaServerRuntime.instance().partyService().addMember(requester.getUUID(), target.getUUID());
+        switch (result.status()) {
+            case CREATED -> {
+                requester.sendSystemMessage(Component.literal("Создана группа. Вы лидер. Участников: " + result.memberCount()));
+                target.sendSystemMessage(Component.literal("Вы вступили в группу. Лидер: " + requester.getGameProfile().getName()));
+                return 1;
+            }
+            case ADDED -> {
+                requester.sendSystemMessage(Component.literal("Игрок " + target.getGameProfile().getName()
+                    + " добавлен в группу. Участников: " + result.memberCount() + "/" + PartyService.MAX_MEMBERS));
+                target.sendSystemMessage(Component.literal("Вы добавлены в группу игроком " + requester.getGameProfile().getName()));
+                return 1;
+            }
+            case NOT_IN_PARTY -> requester.sendSystemMessage(Component.literal("Сначала создайте группу через /party <nickname>"));
+            case NOT_LEADER -> requester.sendSystemMessage(Component.literal("Только лидер группы может добавлять игроков"));
+            case PARTY_FULL -> requester.sendSystemMessage(Component.literal("В группе уже максимум " + PartyService.MAX_MEMBERS + " игроков"));
+            case TARGET_IN_OTHER_PARTY -> requester.sendSystemMessage(Component.literal("Игрок уже состоит в другой группе"));
+            case TARGET_ALREADY_IN_PARTY -> requester.sendSystemMessage(Component.literal("Игрок уже в вашей группе"));
+            case SELF_TARGET -> requester.sendSystemMessage(Component.literal("Нельзя добавить самого себя"));
+            default -> requester.sendSystemMessage(Component.literal("Не удалось добавить игрока в группу"));
+        }
+        return 0;
+    }
+
+    private int partyLeave(ServerPlayer requester) {
+        if (!isAuthenticated(requester)) {
+            return 0;
+        }
+        UUID requesterUuid = requester.getUUID();
+        Set<UUID> membersBeforeLeave = VeyloriaServerRuntime.instance().partyService().membersOf(requesterUuid);
+        UUID leaderBeforeLeave = VeyloriaServerRuntime.instance().partyService().leaderOf(requesterUuid);
+        PartyService.PartyUpdateResult result = VeyloriaServerRuntime.instance().partyService().leave(requesterUuid);
+        if (result.status() == PartyService.Status.NOT_IN_PARTY) {
+            requester.sendSystemMessage(Component.literal("Вы не состоите в группе"));
+            return 0;
+        }
+
+        requester.sendSystemMessage(Component.literal(result.partyId() == null
+            ? "Вы вышли из группы"
+            : "Вы вышли из группы. Осталось участников: " + result.memberCount()));
+
+        for (UUID memberUuid : membersBeforeLeave) {
+            if (memberUuid.equals(requesterUuid)) {
+                continue;
+            }
+            ServerPlayer member = requester.getServer().getPlayerList().getPlayer(memberUuid);
+            if (member != null) {
+                member.sendSystemMessage(Component.literal(requester.getGameProfile().getName() + " вышел из группы"));
+            }
+        }
+        if (leaderBeforeLeave != null && leaderBeforeLeave.equals(requesterUuid)
+            && result.partyId() != null && result.leaderUuid() != null) {
+            ServerPlayer newLeader = requester.getServer().getPlayerList().getPlayer(result.leaderUuid());
+            if (newLeader != null) {
+                newLeader.sendSystemMessage(Component.literal("Вы назначены лидером группы"));
+            }
+        }
+        return 1;
+    }
+
+    private int partyKick(ServerPlayer requester, String nickname) {
+        if (!isAuthenticated(requester)) {
+            return 0;
+        }
+        ServerPlayer target = requester.getServer().getPlayerList().getPlayerByName(nickname);
+        if (target == null) {
+            requester.sendSystemMessage(Component.literal("Игрок не найден в онлайне"));
+            return 0;
+        }
+        PartyService.PartyUpdateResult result = VeyloriaServerRuntime.instance().partyService().kick(requester.getUUID(), target.getUUID());
+        switch (result.status()) {
+            case KICKED -> {
+                requester.sendSystemMessage(Component.literal("Игрок " + target.getGameProfile().getName()
+                    + " исключён из группы. Участников: " + result.memberCount() + "/" + PartyService.MAX_MEMBERS));
+                target.sendSystemMessage(Component.literal("Вы исключены из группы игроком " + requester.getGameProfile().getName()));
+                return 1;
+            }
+            case NOT_IN_PARTY -> requester.sendSystemMessage(Component.literal("Вы не состоите в группе"));
+            case NOT_LEADER -> requester.sendSystemMessage(Component.literal("Только лидер группы может исключать игроков"));
+            case TARGET_NOT_IN_PARTY -> requester.sendSystemMessage(Component.literal("Игрок не состоит в вашей группе"));
+            case CANNOT_KICK_SELF -> requester.sendSystemMessage(Component.literal("Для выхода из группы используйте /party leave"));
+            default -> requester.sendSystemMessage(Component.literal("Не удалось исключить игрока из группы"));
+        }
+        return 0;
+    }
+
+    private boolean isAuthenticated(ServerPlayer player) {
+        return VeyloriaServerRuntime.instance().authService().sessionManager().isAuthenticated(player.getUUID());
     }
 
     private List<ServerPlayer> resolveExperienceRecipients(ServerLevel level, MobInstance instance, int zoneIndex) {
