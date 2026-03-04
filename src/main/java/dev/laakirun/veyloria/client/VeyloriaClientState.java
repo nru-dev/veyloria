@@ -1,6 +1,7 @@
 package dev.laakirun.veyloria.client;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
@@ -18,6 +19,7 @@ public final class VeyloriaClientState {
     private int manaMax;
     private String lastError = "";
     private final List<Notification> notifications = new ArrayList<>();
+    private final List<Notification> notificationsView = Collections.unmodifiableList(notifications);
     private final Map<UUID, ResourceBars> barsByPlayer = new HashMap<>();
 
     private VeyloriaClientState() {
@@ -123,7 +125,7 @@ public final class VeyloriaClientState {
     }
 
     public List<Notification> notifications() {
-        return List.copyOf(notifications);
+        return notificationsView;
     }
 
     public void prune(long gameTick) {
