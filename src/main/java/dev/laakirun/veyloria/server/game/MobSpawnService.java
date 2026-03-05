@@ -1099,7 +1099,7 @@ public final class MobSpawnService {
         nameplateStateByMob.put(mob.getUUID(), new NameplateState(hpCurrent, hpMax, gameTick));
     }
 
-    private static Component buildNameplate(MobTemplate template, int hpCurrent, int hpMax) {
+    public static Component buildNameplate(MobTemplate template, int hpCurrent, int hpMax) {
         ChatFormatting relationColor = switch (template.hostilityType()) {
             case FRIENDLY -> ChatFormatting.GREEN;
             case NEUTRAL -> ChatFormatting.YELLOW;

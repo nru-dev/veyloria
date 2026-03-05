@@ -37,12 +37,18 @@ public final class StructureService {
     private static final int MAX_ATTEMPTS_PER_STRUCTURE = 220;
     private static final int MAX_PLACEMENTS_PER_TICK = 3;
     private static final long PLACEMENT_INTERVAL_TICKS = 10L;
+    private static final String DUNGEON_ENTRANCE_CODE = "dungeon_cave";
 
     private final DatabaseManager databaseManager;
     private final Map<Long, StructureInstanceState> instancesById = new LinkedHashMap<>();
+    private final Map<String, List<StructureInstanceState>> instancesByDimension = new LinkedHashMap<>();
+    private final Map<String, Map<Long, List<StructureInstanceState>>> instancesByDimensionAndTemplate = new LinkedHashMap<>();
+    private final Map<String, List<StructureSpatialEntry>> placedSpatialByDimension = new LinkedHashMap<>();
+    private final Map<Long, StructureTemplate> templatesById = new LinkedHashMap<>();
     private final Map<String, StructureClipboardLoader.LoadedSchematic> schematicCacheByTemplateCode = new ConcurrentHashMap<>();
     private final Set<String> missingSchematicsLogged = ConcurrentHashMap.newKeySet();
     private final StructureClipboardLoader clipboardLoader;
+    private Map<String, String> metadataByCode = Map.of();
 
     private long activeWorldSeed = Long.MIN_VALUE;
     private long lastPlacementTick = Long.MIN_VALUE;
@@ -76,6 +82,11 @@ public final class StructureService {
 
     public void forceReload(MinecraftServer server) {
         instancesById.clear();
+        instancesByDimension.clear();
+        instancesByDimensionAndTemplate.clear();
+        placedSpatialByDimension.clear();
+        templatesById.clear();
+        metadataByCode = Map.of();
         schematicCacheByTemplateCode.clear();
         missingSchematicsLogged.clear();
         initialized = false;
@@ -132,8 +143,8 @@ public final class StructureService {
 
         String dimension = overworld.dimension().location().toString();
         int placed = 0;
-        for (StructureInstanceState state : instancesById.values()) {
-            if (state.placed || !Objects.equals(state.dimension, dimension)) {
+        for (StructureInstanceState state : instancesInDimension(dimension)) {
+            if (state.placed) {
                 continue;
             }
             StructureTemplate template = contentService.structureTemplate(state.structureTemplateId);
@@ -155,6 +166,9 @@ public final class StructureService {
             LOGGER.info("Placed structure '{}' in zone {} at ({}, {}, {}) via force place",
                 template.code(), state.zoneIndex, state.originX, state.originY, state.originZ);
         }
+        if (placed > 0) {
+            rebuildRuntimeIndexes(contentService);
+        }
         return placed;
     }
 
@@ -168,6 +182,59 @@ public final class StructureService {
             .map(template -> "veyloria:" + template.code())
             .sorted(Comparator.naturalOrder())
             .toList();
+    }
+
+    public Map<String, String> structureMetadata() {
+        if (!metadataByCode.isEmpty()) {
+            return metadataByCode;
+        }
+        ContentService contentService = VeyloriaServerRuntime.instance().contentService();
+        if (contentService == null) {
+            return Map.of();
+        }
+        Map<String, String> metadata = new LinkedHashMap<>();
+        for (StructureTemplate template : contentService.structureTemplates()) {
+            if (!template.enabled()) {
+                continue;
+            }
+            metadata.put(template.code(), template.name());
+        }
+        return Map.copyOf(metadata);
+    }
+
+    public StructurePresence structureAt(ServerLevel level, double x, double y, double z) {
+        if (level == null) {
+            return null;
+        }
+        ensureInitialized(level, false);
+        if (!initialized) {
+            return null;
+        }
+        List<StructureSpatialEntry> entries = placedSpatialByDimension.get(level.dimension().location().toString());
+        if (entries == null || entries.isEmpty()) {
+            return null;
+        }
+
+        BlockPos pos = BlockPos.containing(x, y, z);
+        StructureSpatialEntry nearest = null;
+        double nearestDistanceSqr = Double.MAX_VALUE;
+
+        for (StructureSpatialEntry entry : entries) {
+            if (pos.getX() < entry.minX() || pos.getX() > entry.maxX()
+                || pos.getY() < entry.minY() || pos.getY() > entry.maxY()
+                || pos.getZ() < entry.minZ() || pos.getZ() > entry.maxZ()) {
+                continue;
+            }
+            double distanceSqr = distanceSqr(pos.getX(), pos.getY(), pos.getZ(), entry.centerX(), entry.centerY(), entry.centerZ());
+            if (nearest == null || distanceSqr < nearestDistanceSqr) {
+                nearestDistanceSqr = distanceSqr;
+                nearest = entry;
+            }
+        }
+        if (nearest == null) {
+            return null;
+        }
+        return new StructurePresence(nearest.structureId(), nearest.displayName(), nearest.localizedName());
     }
 
     public LocateResult locateAndEnsurePlaced(ServerLevel level, String structureId, double originX, double originZ) {
@@ -200,10 +267,7 @@ public final class StructureService {
         String dimension = level.dimension().location().toString();
         StructureInstanceState nearest = null;
         double nearestDistanceSqr = Double.MAX_VALUE;
-        for (StructureInstanceState state : instancesById.values()) {
-            if (state.structureTemplateId != template.id() || !Objects.equals(state.dimension, dimension)) {
-                continue;
-            }
+        for (StructureInstanceState state : instancesInDimensionForTemplate(dimension, template.id())) {
             double dx = (state.originX + 0.5D) - originX;
             double dz = (state.originZ + 0.5D) - originZ;
             double distanceSqr = dx * dx + dz * dz;
@@ -232,6 +296,7 @@ public final class StructureService {
             paste(level, nearest, schematic);
             nearest.placed = true;
             markPlaced(nearest.id);
+            rebuildRuntimeIndexes(contentService);
             spawnedNow = true;
             LOGGER.info("Placed structure '{}' in zone {} at ({}, {}, {}) via locate",
                 template.code(), nearest.zoneIndex, nearest.originX, nearest.originY, nearest.originZ);
@@ -245,6 +310,71 @@ public final class StructureService {
             locator.z(),
             Math.sqrt(nearestDistanceSqr),
             spawnedNow
+        );
+    }
+
+    public LocateResult nearestPlacedStructure(ServerLevel level,
+                                               String structureId,
+                                               double originX,
+                                               double originZ,
+                                               double maxDistance) {
+        if (level == null || structureId == null || structureId.isBlank()) {
+            return null;
+        }
+        ensureInitialized(level, false);
+        if (!initialized) {
+            return null;
+        }
+        ContentService contentService = VeyloriaServerRuntime.instance().contentService();
+        if (contentService == null) {
+            return null;
+        }
+        String code = structureId.trim();
+        if (code.regionMatches(true, 0, "veyloria:", 0, "veyloria:".length())) {
+            code = code.substring("veyloria:".length());
+        }
+        if (code.isBlank()) {
+            return null;
+        }
+        StructureTemplate template = contentService.structureTemplate(code);
+        if (template == null || !template.enabled()) {
+            return null;
+        }
+        String dimension = level.dimension().location().toString();
+        StructureInstanceState nearest = null;
+        double nearestDistanceSqr = Double.MAX_VALUE;
+        for (StructureInstanceState state : instancesInDimensionForTemplate(dimension, template.id())) {
+            if (!state.placed) {
+                continue;
+            }
+            RotationFootprint footprint = rotationFootprint(template.sizeX(), template.sizeZ(), state.rotationQuadrants);
+            double centerX = state.originX + (footprint.width() - 1) * 0.5D;
+            double centerZ = state.originZ + (footprint.length() - 1) * 0.5D;
+            double dx = centerX - originX;
+            double dz = centerZ - originZ;
+            double distanceSqr = dx * dx + dz * dz;
+            if (distanceSqr < nearestDistanceSqr) {
+                nearestDistanceSqr = distanceSqr;
+                nearest = state;
+            }
+        }
+        if (nearest == null) {
+            return null;
+        }
+        if (maxDistance > 0.0D && nearestDistanceSqr > maxDistance * maxDistance) {
+            return null;
+        }
+        RotationFootprint footprint = rotationFootprint(template.sizeX(), template.sizeZ(), nearest.rotationQuadrants);
+        int x = nearest.originX + footprint.width() / 2;
+        int z = nearest.originZ + footprint.length() / 2;
+        int y = nearest.originY + 1;
+        return new LocateResult(
+            "veyloria:" + template.code(),
+            x,
+            y,
+            z,
+            Math.sqrt(nearestDistanceSqr),
+            false
         );
     }
 
@@ -269,13 +399,17 @@ public final class StructureService {
             return;
         }
 
-        Map<Long, StructureTemplate> templatesById = new LinkedHashMap<>();
+        templatesById.clear();
         for (StructureTemplate template : contentService.structureTemplates()) {
             templatesById.put(template.id(), template);
         }
         List<StructureSpawnRule> rules = contentService.structureSpawnRules();
 
         instancesById.clear();
+        instancesByDimension.clear();
+        instancesByDimensionAndTemplate.clear();
+        placedSpatialByDimension.clear();
+        metadataByCode = Map.of();
         lastPlacementTick = Long.MIN_VALUE;
 
         try (Connection connection = databaseManager.connection()) {
@@ -298,6 +432,7 @@ public final class StructureService {
             return;
         }
 
+        rebuildRuntimeIndexes(contentService);
         activeWorldSeed = worldSeed;
         initialized = true;
         LOGGER.info(
@@ -330,9 +465,14 @@ public final class StructureService {
             }
             for (int zoneIndex = zoneStart; zoneIndex <= zoneEnd; zoneIndex++) {
                 Random random = new Random(ruleSeed(worldSeed, template, rule, zoneIndex));
-                int minCount = Math.max(0, Math.min(rule.countMinPerZone(), rule.countMaxPerZone()));
-                int maxCount = Math.max(minCount, Math.max(rule.countMinPerZone(), rule.countMaxPerZone()));
+                int minCount = isDungeonEntrance(template)
+                    ? 1
+                    : Math.max(0, Math.min(rule.countMinPerZone(), rule.countMaxPerZone()));
+                int maxCount = isDungeonEntrance(template)
+                    ? 1
+                    : Math.max(minCount, Math.max(rule.countMinPerZone(), rule.countMaxPerZone()));
                 int targetCount = minCount + (maxCount > minCount ? random.nextInt(maxCount - minCount + 1) : 0);
+                int placedInZone = 0;
                 for (int rollIndex = 0; rollIndex < targetCount; rollIndex++) {
                     SpawnCandidate candidate = findCandidate(rule, zoneIndex, random, acceptedPoints);
                     if (candidate == null) {
@@ -340,6 +480,21 @@ public final class StructureService {
                     }
                     insertInstance(connection, worldSeed, template.id(), rule.id(), rule.dimension(), zoneIndex, candidate);
                     acceptedPoints.add(new PlacementPoint(rule.dimension(), candidate.x, candidate.z, rule.minDistanceBetween()));
+                    placedInZone++;
+                }
+                if (isDungeonEntrance(template) && placedInZone < minCount) {
+                    int missing = minCount - placedInZone;
+                    for (int index = 0; index < missing; index++) {
+                        SpawnCandidate fallback = findDungeonFallbackCandidate(rule, zoneIndex, random, acceptedPoints);
+                        if (fallback == null) {
+                            LOGGER.warn("Failed to guarantee dungeon entrance in zone {} for rule {}",
+                                zoneIndex, rule.id());
+                            break;
+                        }
+                        insertInstance(connection, worldSeed, template.id(), rule.id(), rule.dimension(), zoneIndex, fallback);
+                        acceptedPoints.add(new PlacementPoint(rule.dimension(), fallback.x, fallback.z, rule.minDistanceBetween()));
+                        placedInZone++;
+                    }
                 }
             }
         }
@@ -378,6 +533,57 @@ public final class StructureService {
         return null;
     }
 
+    private SpawnCandidate findDungeonFallbackCandidate(StructureSpawnRule rule,
+                                                        int zoneIndex,
+                                                        Random random,
+                                                        List<PlacementPoint> acceptedPoints) {
+        if (!TestWorldLayoutService.OVERWORLD_DIMENSION.equals(rule.dimension())) {
+            return null;
+        }
+        int southBoundary = TestWorldLayoutService.FIRST_ZONE_SOUTH_Z - (zoneIndex - 1) * TestWorldLayoutService.ZONE_LENGTH;
+        int northBoundary = southBoundary - TestWorldLayoutService.ZONE_LENGTH + 1;
+        int xMin = -TestWorldLayoutService.ZONE_HALF_WIDTH + EDGE_MARGIN;
+        int xMax = TestWorldLayoutService.ZONE_HALF_WIDTH - EDGE_MARGIN;
+        int zMin = northBoundary + EDGE_MARGIN;
+        int zMax = southBoundary - EDGE_MARGIN;
+        if (xMin > xMax || zMin > zMax) {
+            return null;
+        }
+
+        int y = TestWorldLayoutService.FLAT_GRASS_Y + 1;
+        int baseRoadOffset = Math.max((int) Math.ceil(Math.max(0.0D, rule.roadDistanceMin())) + 8, 36);
+        int centerZ = (zMin + zMax) / 2;
+
+        for (int zDelta = 0; zDelta <= (zMax - zMin); zDelta += 28) {
+            for (int direction : new int[] {0, 1, -1}) {
+                int z = clamp(centerZ + direction * zDelta, zMin, zMax);
+                for (int xAbs = baseRoadOffset; xAbs <= xMax; xAbs += 24) {
+                    int[] xs = new int[] {-xAbs, xAbs};
+                    for (int x : xs) {
+                        if (x < xMin || x > xMax) {
+                            continue;
+                        }
+                        if (!isValidByRoad(rule, x, z)) {
+                            continue;
+                        }
+                        if (!isSpacedEnough(rule.dimension(), x, z, rule.minDistanceBetween(), acceptedPoints)) {
+                            continue;
+                        }
+                        return new SpawnCandidate(x, y, z, random.nextInt(4));
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    private static boolean isDungeonEntrance(StructureTemplate template) {
+        if (template == null || template.code() == null) {
+            return false;
+        }
+        return DUNGEON_ENTRANCE_CODE.equalsIgnoreCase(template.code().trim());
+    }
+
     private static boolean isValidByRoad(StructureSpawnRule rule, int x, int z) {
         if (TestWorldLayoutService.isInSafeCorridor(rule.dimension(), x, z)) {
             return false;
@@ -413,6 +619,110 @@ public final class StructureService {
         return true;
     }
 
+    private static double distanceSqr(double x, double y, double z, double centerX, double centerY, double centerZ) {
+        double dx = x - centerX;
+        double dy = y - centerY;
+        double dz = z - centerZ;
+        return dx * dx + dy * dy + dz * dz;
+    }
+
+    private void rebuildRuntimeIndexes(ContentService contentService) {
+        instancesByDimension.clear();
+        instancesByDimensionAndTemplate.clear();
+        placedSpatialByDimension.clear();
+        if (contentService == null || instancesById.isEmpty()) {
+            metadataByCode = Map.of();
+            return;
+        }
+
+        Map<String, String> metadata = new LinkedHashMap<>();
+        for (StructureTemplate template : contentService.structureTemplates()) {
+            if (template.enabled()) {
+                metadata.put(template.code(), template.name());
+            }
+        }
+        metadataByCode = Map.copyOf(metadata);
+
+        for (StructureInstanceState state : instancesById.values()) {
+            instancesByDimension.computeIfAbsent(state.dimension, ignored -> new ArrayList<>()).add(state);
+            instancesByDimensionAndTemplate
+                .computeIfAbsent(state.dimension, ignored -> new LinkedHashMap<>())
+                .computeIfAbsent(state.structureTemplateId, ignored -> new ArrayList<>())
+                .add(state);
+
+            if (!state.placed) {
+                continue;
+            }
+            StructureTemplate template = templatesById.get(state.structureTemplateId);
+            if (template == null || !template.enabled()) {
+                continue;
+            }
+            RotationFootprint footprint = rotationFootprint(template.sizeX(), template.sizeZ(), state.rotationQuadrants);
+            int minX = state.originX;
+            int maxX = state.originX + footprint.width() - 1;
+            int minZ = state.originZ;
+            int maxZ = state.originZ + footprint.length() - 1;
+            int minY = state.originY;
+            int maxY = state.originY + Math.max(1, template.sizeY()) - 1;
+            double centerX = (minX + maxX) * 0.5D;
+            double centerY = (minY + maxY) * 0.5D;
+            double centerZ = (minZ + maxZ) * 0.5D;
+            placedSpatialByDimension.computeIfAbsent(state.dimension, ignored -> new ArrayList<>())
+                .add(new StructureSpatialEntry(
+                    template.code(),
+                    template.code(),
+                    template.name(),
+                    minX,
+                    maxX,
+                    minY,
+                    maxY,
+                    minZ,
+                    maxZ,
+                    centerX,
+                    centerY,
+                    centerZ
+                ));
+        }
+
+        for (Map.Entry<String, List<StructureInstanceState>> entry : new ArrayList<>(instancesByDimension.entrySet())) {
+            entry.setValue(List.copyOf(entry.getValue()));
+        }
+        for (Map.Entry<String, Map<Long, List<StructureInstanceState>>> entry : new ArrayList<>(instancesByDimensionAndTemplate.entrySet())) {
+            Map<Long, List<StructureInstanceState>> byTemplate = new LinkedHashMap<>();
+            for (Map.Entry<Long, List<StructureInstanceState>> templateEntry : entry.getValue().entrySet()) {
+                byTemplate.put(templateEntry.getKey(), List.copyOf(templateEntry.getValue()));
+            }
+            entry.setValue(Map.copyOf(byTemplate));
+        }
+        for (Map.Entry<String, List<StructureSpatialEntry>> entry : new ArrayList<>(placedSpatialByDimension.entrySet())) {
+            entry.setValue(List.copyOf(entry.getValue()));
+        }
+    }
+
+    private List<StructureInstanceState> instancesInDimension(String dimension) {
+        List<StructureInstanceState> instances = instancesByDimension.get(dimension);
+        return instances == null ? List.of() : instances;
+    }
+
+    private List<StructureInstanceState> instancesInDimensionForTemplate(String dimension, long templateId) {
+        Map<Long, List<StructureInstanceState>> byTemplate = instancesByDimensionAndTemplate.get(dimension);
+        if (byTemplate == null) {
+            return List.of();
+        }
+        List<StructureInstanceState> instances = byTemplate.get(templateId);
+        return instances == null ? List.of() : instances;
+    }
+
+    private static int clamp(int value, int min, int max) {
+        if (value < min) {
+            return min;
+        }
+        if (value > max) {
+            return max;
+        }
+        return value;
+    }
+
     private void placePendingStructures(ServerLevel level) {
         if (clipboardLoader == null || instancesById.isEmpty()) {
             return;
@@ -426,11 +736,11 @@ public final class StructureService {
         String dimension = level.dimension().location().toString();
         int placements = 0;
 
-        for (StructureInstanceState state : instancesById.values()) {
+        for (StructureInstanceState state : instancesInDimension(dimension)) {
             if (placements >= MAX_PLACEMENTS_PER_TICK) {
                 break;
             }
-            if (state.placed || !Objects.equals(state.dimension, dimension)) {
+            if (state.placed) {
                 continue;
             }
             StructureTemplate template = contentService.structureTemplate(state.structureTemplateId);
@@ -451,6 +761,9 @@ public final class StructureService {
             markPlaced(state.id);
             LOGGER.info("Placed structure '{}' in zone {} at ({}, {}, {})",
                 template.code(), state.zoneIndex, state.originX, state.originY, state.originZ);
+        }
+        if (placements > 0) {
+            rebuildRuntimeIndexes(contentService);
         }
     }
 
@@ -547,6 +860,9 @@ public final class StructureService {
         String schematicFile = template.schematicFile() == null ? "" : template.schematicFile().trim().toLowerCase(Locale.ROOT);
         if ("town".equals(code) || "generated:town".equals(schematicFile)) {
             return GeneratedTownSchematic.create();
+        }
+        if ("dungeon_cave".equals(code) || "generated:dungeon_cave".equals(schematicFile)) {
+            return GeneratedDungeonCaveSchematic.create();
         }
         return null;
     }
@@ -746,6 +1062,22 @@ public final class StructureService {
         return veyloriaStructures;
     }
 
+    private record StructureSpatialEntry(
+        String structureId,
+        String displayName,
+        String localizedName,
+        int minX,
+        int maxX,
+        int minY,
+        int maxY,
+        int minZ,
+        int maxZ,
+        double centerX,
+        double centerY,
+        double centerZ
+    ) {
+    }
+
     private record PlacementPoint(String dimension, int x, int z, double minDistance) {
     }
 
@@ -807,6 +1139,13 @@ public final class StructureService {
         int z,
         double distance,
         boolean spawnedNow
+    ) {
+    }
+
+    public record StructurePresence(
+        String structureId,
+        String displayName,
+        String localizedName
     ) {
     }
 }

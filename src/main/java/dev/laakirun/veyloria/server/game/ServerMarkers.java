@@ -16,6 +16,8 @@ public final class ServerMarkers {
     public static final String BARS = "[veyloria:bars]";
     public static final String TARGET = "[veyloria:target]";
     public static final String ZONE = "[veyloria:zone]";
+    public static final String STRUCTURE = "[veyloria:structure]";
+    public static final String DUNGEON = "[veyloria:dungeon]";
 
     private ServerMarkers() {
     }
@@ -81,6 +83,23 @@ public final class ServerMarkers {
                 + "|index=" + zoneIndex
                 + "|name=" + zoneName
                 + "|range=" + levelRange
+        ));
+    }
+
+    public static void sendStructure(ServerPlayer player, String structureId, String displayName, String localizedName) {
+        player.sendSystemMessage(Component.literal(
+            STRUCTURE
+                + "|id=" + (structureId == null ? "" : structureId)
+                + "|display=" + (displayName == null ? "" : displayName)
+                + "|name=" + (localizedName == null ? "" : localizedName)
+        ));
+    }
+
+    public static void sendDungeon(ServerPlayer player, String dungeonName, String subtitle) {
+        player.sendSystemMessage(Component.literal(
+            DUNGEON
+                + "|name=" + (dungeonName == null ? "" : dungeonName)
+                + "|subtitle=" + (subtitle == null ? "" : subtitle)
         ));
     }
 }

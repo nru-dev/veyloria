@@ -146,6 +146,10 @@ public final class PartyService {
         return sizeUnsafe(member);
     }
 
+    public synchronized UUID partyIdOf(UUID member) {
+        return partyByMember.get(member);
+    }
+
     public synchronized void removeMember(UUID member) {
         leave(member);
     }

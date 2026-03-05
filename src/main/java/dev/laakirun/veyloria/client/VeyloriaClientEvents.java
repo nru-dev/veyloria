@@ -225,6 +225,7 @@ public final class VeyloriaClientEvents {
         guiGraphics.drawString(minecraft.font, "Ур. " + minecraft.player.experienceLevel, 12, hpY - 1, 0xF0F0F0, false);
         guiGraphics.drawString(minecraft.font, "Броня: " + armorValue, 12, hpY + 9, 0xD0D0D0, false);
         guiGraphics.drawString(minecraft.font, "Медь: " + VeyloriaClientState.instance().copper(), width - 116, 12, 0xF0A040, false);
+        drawLocationOverlay(guiGraphics, minecraft);
 
         int notificationBaseY = manaMax > 0 ? hpY - 24 : hpY - 14;
         int index = 0;
@@ -343,11 +344,31 @@ public final class VeyloriaClientEvents {
             return;
         }
         if (marker.startsWith("[veyloria:zone]")) {
+            state.setZoneContext(
+                fieldValue(marker, "name"),
+                fieldValue(marker, "range")
+            );
             state.showZoneAnnouncement(
                 fieldValue(marker, "name"),
                 fieldValue(marker, "range"),
                 tickNow()
             );
+            return;
+        }
+        if (marker.startsWith("[veyloria:structure]")) {
+            String structureId = fieldValue(marker, "id");
+            String displayName = fieldValue(marker, "display");
+            String localizedName = fieldValue(marker, "name");
+            state.setStructureContext(structureId, displayName, localizedName);
+            if (!structureId.isBlank()) {
+                state.showZoneAnnouncement(displayName.isBlank() ? structureId : displayName, "", tickNow());
+            }
+            return;
+        }
+        if (marker.startsWith("[veyloria:dungeon]")) {
+            String dungeonName = fieldValue(marker, "name");
+            String subtitle = fieldValue(marker, "subtitle");
+            state.showZoneAnnouncement(dungeonName, subtitle, tickNow());
         }
     }
 
@@ -468,6 +489,31 @@ public final class VeyloriaClientEvents {
         if (!subtitle.isBlank()) {
             guiGraphics.drawCenteredString(minecraft.font, subtitle, width / 2, boxY + 20, subtitleColor);
         }
+    }
+
+    private static void drawLocationOverlay(GuiGraphics guiGraphics, Minecraft minecraft) {
+        if (minecraft.player == null) {
+            return;
+        }
+        VeyloriaClientState state = VeyloriaClientState.instance();
+        String locationLine = "Локация: " + state.activeLocationLabel();
+        if (state.currentStructureId().isBlank() && !state.currentZoneRange().isBlank()) {
+            locationLine = locationLine + " (" + state.currentZoneRange() + ")";
+        }
+        int blockX = minecraft.player.getBlockX();
+        int blockY = minecraft.player.getBlockY();
+        int blockZ = minecraft.player.getBlockZ();
+        String coordsLine = "Коорд: " + blockX + " " + blockY + " " + blockZ;
+
+        int x = 12;
+        int y = 12;
+        int locationWidth = minecraft.font.width(locationLine);
+        int coordsWidth = minecraft.font.width(coordsLine);
+        int panelWidth = Math.max(locationWidth, coordsWidth) + 8;
+        int panelHeight = 22;
+        guiGraphics.fill(x - 4, y - 3, x - 4 + panelWidth, y - 3 + panelHeight, 0x7A101010);
+        guiGraphics.drawString(minecraft.font, locationLine, x, y, 0xF7E6BA, false);
+        guiGraphics.drawString(minecraft.font, coordsLine, x, y + 10, 0xD6D6D6, false);
     }
 
     private static double zoneAnnouncementAlpha(long age) {

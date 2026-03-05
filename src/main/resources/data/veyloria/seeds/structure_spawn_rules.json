@@ -28,6 +28,20 @@
     "enabled": true
   },
   {
+    "structure_template": "dungeon_cave",
+    "dimension": "minecraft:overworld",
+    "zone_min": 1,
+    "zone_max": 7,
+    "count_min_per_zone": 1,
+    "count_max_per_zone": 1,
+    "road_distance_min": 36.0,
+    "road_distance_max": 210.0,
+    "min_distance_between": 190.0,
+    "near_spawn_rules_json": "[]",
+    "inside_spawn_rules_json": "[]",
+    "enabled": true
+  },
+  {
     "structure_template": "town",
     "dimension": "minecraft:overworld",
     "zone_min": 1,
