@@ -14,7 +14,10 @@ import org.slf4j.LoggerFactory;
 
 public final class MigrationService {
     private static final Logger LOGGER = LoggerFactory.getLogger("veyloria.db");
-    private static final List<String> MIGRATIONS = List.of("data/veyloria/migrations/V001__init.sql");
+    private static final List<String> MIGRATIONS = List.of(
+        "data/veyloria/migrations/V001__init.sql",
+        "data/veyloria/migrations/V002__structures.sql"
+    );
 
     private final DatabaseManager databaseManager;
 

@@ -1,0 +1,32 @@
+[
+  {
+    "code": "starter_outpost",
+    "name": "Сторожевой аванпост",
+    "structure_type": "village",
+    "schematic_file": "starter_outpost.schem",
+    "size_x": 33,
+    "size_y": 22,
+    "size_z": 33,
+    "enabled": false
+  },
+  {
+    "code": "we_1",
+    "name": "Постройка 1",
+    "structure_type": "village",
+    "schematic_file": "1.schem",
+    "size_x": 16,
+    "size_y": 9,
+    "size_z": 19,
+    "enabled": true
+  },
+  {
+    "code": "town",
+    "name": "Town",
+    "structure_type": "city",
+    "schematic_file": "generated:town",
+    "size_x": 97,
+    "size_y": 24,
+    "size_z": 97,
+    "enabled": true
+  }
+]

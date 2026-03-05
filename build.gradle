@@ -14,6 +14,13 @@ group = mod_group_id
 
 repositories {
     mavenCentral()
+    maven {
+        url = uri('https://maven.enginehub.org/repo/')
+        metadataSources {
+            mavenPom()
+            artifact()
+        }
+    }
 }
 
 base {
@@ -94,6 +101,8 @@ sourceSets.main.resources.srcDir generateModMetadata
 
 dependencies {
     implementation('org.xerial:sqlite-jdbc:3.49.1.0')
+    compileOnly('com.sk89q.worldedit:worldedit-core:7.3.8') { transitive = false }
+    compileOnly('com.sk89q.worldedit:worldedit-neoforge-mc1.21:7.3.8') { transitive = false }
 
     jarJar('org.xerial:sqlite-jdbc:3.49.1.0') {
         version {

@@ -74,4 +74,30 @@ public final class SeedDtos {
         public double pack_spread_max;
         public boolean enabled;
     }
+
+    public static final class StructureTemplateSeed {
+        public String code;
+        public String name;
+        public String structure_type;
+        public String schematic_file;
+        public int size_x;
+        public int size_y;
+        public int size_z;
+        public boolean enabled;
+    }
+
+    public static final class StructureSpawnRuleSeed {
+        public String structure_template;
+        public String dimension;
+        public int zone_min;
+        public int zone_max;
+        public int count_min_per_zone;
+        public int count_max_per_zone;
+        public double road_distance_min;
+        public double road_distance_max;
+        public double min_distance_between;
+        public String near_spawn_rules_json;
+        public String inside_spawn_rules_json;
+        public boolean enabled;
+    }
 }

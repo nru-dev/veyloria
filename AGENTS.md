@@ -21,6 +21,9 @@
    - `git checkout dev`
 7. Выполнить базовую проверку:
    - `bash ./gradlew test`
+8. Для работы со структурами через WorldEdit убедиться, что мод установлен в dev-рантайм:
+   - `mkdir -p run/mods`
+   - `curl -fsSL -o run/mods/worldedit-mod-7.3.8.jar https://cdn.modrinth.com/data/1u6JkXh5/versions/WTAFvuRx/worldedit-mod-7.3.8.jar`
 
 Если на macOS с Homebrew не установлен Java:
 - `brew install openjdk@21`
@@ -74,6 +77,10 @@
 ## Актуальный Функционал (для быстрого ознакомления)
 - Тестовый мир: 7 зон по северу (`1-10` ... `70-80`), дорога и безопасный коридор, разделители из белой шерсти.
 - Спавн только кастомных мобов; ванильный спавн мобов отключён.
+- Кастомные структуры активны отдельным модулем `server.structure`:
+  - шаблоны и правила в seed-данных (`structure_templates.json`, `structure_spawn_rules.json`)
+  - генерация случайного количества структур по зонам
+  - размещение `.schem` из WorldEdit при подгрузке чанков рядом с игроками
 - Бой сервер-авторитетный: threat, evade, leash, party XP-share в рамках одной зоны.
 - Party runtime: `/party` и `/p` с подкомандами `add/kick/leave/help`, лимит группы 5, лидер-правила на add/kick.
 - Ручная авторизация отключена: аккаунт/сессия создаются автоматически при входе игрока.
@@ -82,12 +89,14 @@
 - Клиент показывает:
   - нижний HUD (медь/мана/уведомления),
   - надголовные бары игроков (`HP` + `MP`) в неймплейте.
+- Dev-инструмент для построек: WorldEdit mod (`run/mods/worldedit-mod-7.3.8.jar`), команды `//...` доступны в игре.
 
 ## Ключевые Точки Кода
 - Серверный runtime и сервисы: `src/main/java/dev/laakirun/veyloria/server`
 - Ключевая серверная игровая логика: `src/main/java/dev/laakirun/veyloria/server/game/VeyloriaServerEvents.java`
 - Сервис групп/лидера: `src/main/java/dev/laakirun/veyloria/server/game/PartyService.java`
 - Спавн/поведение мобов: `src/main/java/dev/laakirun/veyloria/server/game/MobSpawnService.java`
+- Модуль структур: `src/main/java/dev/laakirun/veyloria/server/structure/StructureService.java`
 - Генерация дропа экипировки: `src/main/java/dev/laakirun/veyloria/server/game/GearDropService.java`
 - Клиентский HUD и маркеры: `src/main/java/dev/laakirun/veyloria/client/VeyloriaClientEvents.java`
 - Клиентское состояние интерфейса: `src/main/java/dev/laakirun/veyloria/client/VeyloriaClientState.java`

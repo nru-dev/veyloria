@@ -12,6 +12,8 @@ import dev.laakirun.veyloria.server.content.SeedDtos.LootEntrySeed;
 import dev.laakirun.veyloria.server.content.SeedDtos.LootTableSeed;
 import dev.laakirun.veyloria.server.content.SeedDtos.MobSpawnGroupSeed;
 import dev.laakirun.veyloria.server.content.SeedDtos.MobTemplateSeed;
+import dev.laakirun.veyloria.server.content.SeedDtos.StructureSpawnRuleSeed;
+import dev.laakirun.veyloria.server.content.SeedDtos.StructureTemplateSeed;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
@@ -47,6 +49,10 @@ public final class SeedImporter {
             }));
             replaceSpawnGroups(connection, readList("data/veyloria/seeds/mob_spawn_groups.json", new TypeToken<List<MobSpawnGroupSeed>>() {
             }));
+            upsertStructureTemplates(connection, readList("data/veyloria/seeds/structure_templates.json", new TypeToken<List<StructureTemplateSeed>>() {
+            }));
+            replaceStructureSpawnRules(connection, readList("data/veyloria/seeds/structure_spawn_rules.json", new TypeToken<List<StructureSpawnRuleSeed>>() {
+            }));
             connection.commit();
             LOGGER.info("Seed data imported");
         } catch (SQLException exception) {
@@ -55,6 +61,9 @@ public final class SeedImporter {
     }
 
     private void clearContentTables(Connection connection) throws SQLException {
+        connection.createStatement().execute("DELETE FROM structure_instances");
+        connection.createStatement().execute("DELETE FROM structure_spawn_rules");
+        connection.createStatement().execute("DELETE FROM structure_templates");
         connection.createStatement().execute("DELETE FROM mob_spawn_groups");
         connection.createStatement().execute("DELETE FROM mob_templates");
         connection.createStatement().execute("DELETE FROM loot_entries");
@@ -220,6 +229,60 @@ public final class SeedImporter {
                 statement.setDouble(13, seed.pack_spread_min);
                 statement.setDouble(14, seed.pack_spread_max);
                 statement.setInt(15, seed.enabled ? 1 : 0);
+                statement.addBatch();
+            }
+            statement.executeBatch();
+        }
+    }
+
+    private void upsertStructureTemplates(Connection connection, List<StructureTemplateSeed> seeds) throws SQLException {
+        String sql = """
+            INSERT INTO structure_templates(code, name, structure_type, schematic_file, size_x, size_y, size_z, enabled)
+            VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(code) DO UPDATE SET
+                name=excluded.name,
+                structure_type=excluded.structure_type,
+                schematic_file=excluded.schematic_file,
+                size_x=excluded.size_x,
+                size_y=excluded.size_y,
+                size_z=excluded.size_z,
+                enabled=excluded.enabled
+            """;
+        try (PreparedStatement statement = connection.prepareStatement(sql)) {
+            for (StructureTemplateSeed seed : seeds) {
+                statement.setString(1, seed.code);
+                statement.setString(2, seed.name);
+                statement.setString(3, seed.structure_type == null ? "poi" : seed.structure_type);
+                statement.setString(4, seed.schematic_file);
+                statement.setInt(5, seed.size_x);
+                statement.setInt(6, seed.size_y);
+                statement.setInt(7, seed.size_z);
+                statement.setInt(8, seed.enabled ? 1 : 0);
+                statement.addBatch();
+            }
+            statement.executeBatch();
+        }
+    }
+
+    private void replaceStructureSpawnRules(Connection connection, List<StructureSpawnRuleSeed> seeds) throws SQLException {
+        String sql = """
+            INSERT INTO structure_spawn_rules(structure_template_id, dimension, zone_min, zone_max, count_min_per_zone, count_max_per_zone, road_distance_min, road_distance_max, min_distance_between, near_spawn_rules_json, inside_spawn_rules_json, enabled)
+            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """;
+        try (PreparedStatement statement = connection.prepareStatement(sql)) {
+            for (StructureSpawnRuleSeed seed : seeds) {
+                statement.setLong(1, findId(connection, "structure_templates", "code", seed.structure_template));
+                statement.setString(2, seed.dimension);
+                statement.setInt(3, seed.zone_min);
+                statement.setInt(4, seed.zone_max);
+                statement.setInt(5, seed.count_min_per_zone);
+                statement.setInt(6, seed.count_max_per_zone);
+                statement.setDouble(7, seed.road_distance_min);
+                statement.setDouble(8, seed.road_distance_max);
+                statement.setDouble(9, seed.min_distance_between);
+                statement.setString(10, seed.near_spawn_rules_json == null ? "[]" : seed.near_spawn_rules_json);
+                statement.setString(11, seed.inside_spawn_rules_json == null ? "[]" : seed.inside_spawn_rules_json);
+                statement.setInt(12, seed.enabled ? 1 : 0);
                 statement.addBatch();
             }
             statement.executeBatch();

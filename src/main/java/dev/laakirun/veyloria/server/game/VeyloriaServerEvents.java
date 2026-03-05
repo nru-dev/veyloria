@@ -22,6 +22,7 @@ import dev.laakirun.veyloria.common.targeting.TargetingService;
 import dev.laakirun.veyloria.server.VeyloriaServerRuntime;
 import dev.laakirun.veyloria.server.content.MobSpawnGroup;
 import dev.laakirun.veyloria.server.content.MobTemplate;
+import dev.laakirun.veyloria.server.db.SeedImporter;
 import dev.laakirun.veyloria.server.profile.ExperienceGainResult;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -117,6 +118,7 @@ public final class VeyloriaServerEvents {
     private final java.util.Map<UUID, Long> suppressKnockbackUntilTickByPlayer = new ConcurrentHashMap<>();
     private final java.util.Map<UUID, Long> playerCombatUntilTickByPlayer = new ConcurrentHashMap<>();
     private final java.util.Map<UUID, Integer> lastZoneByPlayer = new ConcurrentHashMap<>();
+    private volatile boolean locateAliasesRegistered;
 
     private long lastSpawnTick;
     private long lastProfileTick;
@@ -162,10 +164,70 @@ public final class VeyloriaServerEvents {
                                 .executes(context -> {
                                     String type = StringArgumentType.getString(context, "type");
                                     double value = DoubleArgumentType.getDouble(context, "value");
-                                    return applyRateOverride(context.getSource(), type, value);
+                            return applyRateOverride(context.getSource(), type, value);
                                 })))))
+                .then(Commands.literal("structures")
+                    .requires(source -> source.hasPermission(2))
+                    .then(Commands.literal("status")
+                        .executes(context -> {
+                            var structureService = VeyloriaServerRuntime.instance().structureService();
+                            if (structureService == null) {
+                                context.getSource().sendFailure(Component.literal("Модуль структур недоступен"));
+                                return 0;
+                            }
+                            context.getSource().sendSuccess(() -> Component.literal(
+                                "Структуры: templates=" + structureService.templateCount()
+                                    + ", rules=" + structureService.ruleCount()
+                                    + ", placed=" + structureService.placedCount()
+                                    + ", pending=" + structureService.pendingCount()
+                            ), false);
+                            return 1;
+                        }))
+                    .then(Commands.literal("reload")
+                        .executes(context -> {
+                            var runtime = VeyloriaServerRuntime.instance();
+                            var structureService = runtime.structureService();
+                            if (structureService == null || runtime.databaseManager() == null || runtime.contentService() == null) {
+                                context.getSource().sendFailure(Component.literal("Модуль структур недоступен"));
+                                return 0;
+                            }
+                            try {
+                                new SeedImporter(runtime.databaseManager()).importSeeds();
+                                runtime.contentService().reload();
+                            } catch (RuntimeException exception) {
+                                context.getSource().sendFailure(Component.literal("Не удалось перечитать seed-данные: " + exception.getMessage()));
+                                return 0;
+                            }
+                            structureService.forceReload(context.getSource().getServer());
+                            registerLocateStructureAliases(context.getSource().getServer().getCommands().getDispatcher(), "locate");
+                            registerLocateStructureAliases(context.getSource().getServer().getCommands().getDispatcher(), "locale");
+                            context.getSource().sendSuccess(() -> Component.literal(
+                                "Структуры перезагружены: templates=" + structureService.templateCount()
+                                    + ", rules=" + structureService.ruleCount()
+                                    + ", placed=" + structureService.placedCount()
+                                    + ", pending=" + structureService.pendingCount()
+                            ), true);
+                            return 1;
+                        }))
+                    .then(Commands.literal("placeall")
+                        .executes(context -> {
+                            var structureService = VeyloriaServerRuntime.instance().structureService();
+                            if (structureService == null) {
+                                context.getSource().sendFailure(Component.literal("Модуль структур недоступен"));
+                                return 0;
+                            }
+                            int placed = structureService.forcePlaceAll(context.getSource().getServer());
+                            context.getSource().sendSuccess(() -> Component.literal(
+                                "Принудительно размещено структур: " + placed
+                                    + " (placed=" + structureService.placedCount()
+                                    + ", pending=" + structureService.pendingCount() + ")"
+                            ), true);
+                            return placed;
+                        })))
         );
 
+        registerLocateStructureAliases(event.getDispatcher(), "locate");
+        registerLocateStructureAliases(event.getDispatcher(), "locale");
         registerPartyAlias(event, "party");
         registerPartyAlias(event, "p");
     }
@@ -237,6 +299,10 @@ public final class VeyloriaServerEvents {
         suppressKnockbackUntilTickByPlayer.clear();
         playerCombatUntilTickByPlayer.clear();
         lastZoneByPlayer.clear();
+        locateAliasesRegistered = false;
+        if (runtime.structureService() != null) {
+            runtime.structureService().forceReload(null);
+        }
     }
 
     @SubscribeEvent
@@ -249,19 +315,27 @@ public final class VeyloriaServerEvents {
         var testWorldLayoutService = runtime.testWorldLayoutService();
         var gearDropService = runtime.gearDropService();
         var playerLoadoutService = runtime.playerLoadoutService();
+        var structureService = runtime.structureService();
         if (serverConfig == null
             || authService == null
             || characterService == null
             || mobSpawnService == null
             || testWorldLayoutService == null
             || gearDropService == null
-            || playerLoadoutService == null) {
+            || playerLoadoutService == null
+            || structureService == null) {
             return;
         }
         MinecraftServer server = event.getServer();
+        if (!locateAliasesRegistered) {
+            registerLocateStructureAliases(server.getCommands().getDispatcher(), "locate");
+            registerLocateStructureAliases(server.getCommands().getDispatcher(), "locale");
+            locateAliasesRegistered = true;
+        }
         long gameTime = server.overworld().getGameTime();
         boolean shouldSyncProfile = gameTime - lastProfileTick >= PROFILE_SYNC_INTERVAL_TICKS;
         testWorldLayoutService.tick(server);
+        structureService.tick(server);
         gearDropService.tick(server);
         List<ServerPlayer> players = server.getPlayerList().getPlayers();
         for (ServerPlayer player : players) {
@@ -970,6 +1044,53 @@ public final class VeyloriaServerEvents {
         VeyloriaServerRuntime.instance().overrideRates(updated);
         source.sendSuccess(() -> Component.literal("Рейт " + rateType + " установлен в " + value + " (только до рестарта)"), false);
         return 1;
+    }
+
+    private void registerLocateStructureAliases(com.mojang.brigadier.CommandDispatcher<CommandSourceStack> dispatcher, String rootCommand) {
+        var structureService = VeyloriaServerRuntime.instance().structureService();
+        if (structureService == null) {
+            return;
+        }
+        List<String> structureIds = structureService.locateStructureIds();
+        if (structureIds.isEmpty()) {
+            return;
+        }
+
+        LiteralArgumentBuilder<CommandSourceStack> structureRoot = Commands.literal("structure");
+        for (String structureId : structureIds) {
+            structureRoot.then(Commands.literal(structureId)
+                .executes(context -> locateStructure(context.getSource(), structureId)));
+        }
+
+        dispatcher.register(
+            LiteralArgumentBuilder.<CommandSourceStack>literal(rootCommand)
+                .requires(source -> source.hasPermission(2))
+                .then(structureRoot)
+        );
+    }
+
+    private int locateStructure(CommandSourceStack source, String structureId) {
+        var structureService = VeyloriaServerRuntime.instance().structureService();
+        if (structureService == null) {
+            source.sendFailure(Component.literal("Модуль структур недоступен"));
+            return 0;
+        }
+        ServerLevel level = source.getLevel();
+        Vec3 pos = source.getPosition();
+        var result = structureService.locateAndEnsurePlaced(level, structureId, pos.x, pos.z);
+        if (result == null) {
+            source.sendFailure(Component.literal("Структура " + structureId + " не найдена в текущем измерении"));
+            return 0;
+        }
+        int distance = (int) Math.round(result.distance());
+        source.sendSuccess(() -> Component.literal(
+            "Ближайшая " + result.structureId() + ": "
+                + result.x() + " " + result.y() + " " + result.z()
+                + " (дистанция: " + distance + " блоков"
+                + (result.spawnedNow() ? ", заспавнена по запросу" : "")
+                + ")"
+        ), false);
+        return Math.max(distance, 1);
     }
 
     private void registerPartyAlias(RegisterCommandsEvent event, String command) {

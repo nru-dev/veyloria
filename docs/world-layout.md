@@ -44,11 +44,50 @@
   - элитный: `3600` секунд
   - босс: `600` секунд
 
-## Кастомные постройки (следующий этап)
+## Кастомные структуры (активно)
 
 - Ванильные постройки выключены.
-- Для кастомных построек резервируется формат:
-  - `structure_id` (строковый идентификатор)
-  - `zone_min_level`, `zone_max_level`
-  - `spawn_rule` (например, редкость, смещение от дороги, минимальная дистанция до другой постройки)
-- На текущем этапе система структур не активирована в рантайме, но зоны и правила спавна мобов уже подготовлены для такого расширения.
+- Отдельный модуль структур (`server.structure`) работает data-driven через БД и seed-файлы:
+  - `structure_templates.json`
+  - `structure_spawn_rules.json`
+- Шаблон структуры хранит:
+  - `code` (`structure_id`)
+  - `name`
+  - `structure_type` (`village/city/capital/dungeon_portal/...`)
+  - `schematic_file` (файл структуры `.schem`/`.nbt` или встроенный генератор вида `generated:<preset>`)
+  - `size_x/size_y/size_z` (габариты для размещения/валидации)
+- Правило спавна структуры хранит:
+  - `zone_min/zone_max`
+  - `count_min_per_zone/count_max_per_zone` (случайное количество на зону)
+  - `road_distance_min/road_distance_max`
+  - `min_distance_between`
+  - `near_spawn_rules_json` и `inside_spawn_rules_json` (правила мобов возле/внутри структуры)
+- При запуске мира мод генерирует точки структур по зонам и размещает их, когда загружаются соответствующие чанки.
+- Перед вставкой структура подготавливает область через layout-сервис (superflat + дорога/границы), чтобы последующая декорация не перетирала блоки структуры.
+- Для точного поиска поддержан `locate`-поток в стиле vanilla:
+  - `/locate structure veyloria:<structure_id>`
+  - alias: `/locale structure veyloria:<structure_id>`
+  - если структура еще не размещена, при `locate` она размещается и возвращаются её координаты;
+  - если структура помечена `placed`, но отсутствует в мире, при `locate` она восстанавливается;
+  - `locate` возвращает опорную точку внутри самой схемы (а не только origin записи инстанса).
+
+## WorldEdit и схемы
+
+- Поддерживаются оба формата структур:
+  - `.schem` (WorldEdit),
+  - `.nbt` (ванильный Structure Template).
+- Для `.schem` в dev-рантайме WorldEdit устанавливается как мод в `run/mods/worldedit-mod-7.3.8.jar`.
+- Файлы структур читаются в одном из путей (по приоритету):
+  - `run/data/veyloria/structures/<file>`
+  - `run/schematics/<file>`
+  - `run/worldedit/schematics/<file>`
+  - `run/config/worldedit/schematics/<file>`
+- Рекомендуемый путь для проекта: `run/data/veyloria/structures`.
+
+## Встроенный пресет Town
+
+- В seed-данных добавлен шаблон `veyloria:town` с `schematic_file=generated:town`.
+- Это процедурный город большого размера (кварталы домов, стены с воротами, центральная площадь, рынок и декор).
+- Структура участвует в обычном потоке `structure_instances` и ищется через:
+  - `/locate structure veyloria:town`
+  - `/locale structure veyloria:town`
