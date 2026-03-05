@@ -26,7 +26,9 @@ public final class ContentService {
     private final Map<Long, ItemTemplate> itemsById = new LinkedHashMap<>();
     private final Map<String, ItemTemplate> itemsByCode = new LinkedHashMap<>();
     private final Map<Long, LootTableDefinition> lootTablesById = new LinkedHashMap<>();
+    private final Map<String, LootTableDefinition> lootTablesByName = new LinkedHashMap<>();
     private final Map<Long, MobTemplate> mobTemplatesById = new LinkedHashMap<>();
+    private final Map<String, MobTemplate> mobTemplatesByCode = new LinkedHashMap<>();
     private final Map<Long, MobSpawnGroup> spawnGroupsById = new LinkedHashMap<>();
     private final Map<Long, StructureTemplate> structureTemplatesById = new LinkedHashMap<>();
     private final Map<String, StructureTemplate> structureTemplatesByCode = new LinkedHashMap<>();
@@ -43,7 +45,9 @@ public final class ContentService {
         itemsById.clear();
         itemsByCode.clear();
         lootTablesById.clear();
+        lootTablesByName.clear();
         mobTemplatesById.clear();
+        mobTemplatesByCode.clear();
         spawnGroupsById.clear();
         structureTemplatesById.clear();
         structureTemplatesByCode.clear();
@@ -84,8 +88,22 @@ public final class ContentService {
         return lootTablesById.get(id);
     }
 
+    public LootTableDefinition lootTable(String name) {
+        if (name == null) {
+            return null;
+        }
+        return lootTablesByName.get(name);
+    }
+
     public MobTemplate mobTemplate(long id) {
         return mobTemplatesById.get(id);
+    }
+
+    public MobTemplate mobTemplate(String code) {
+        if (code == null) {
+            return null;
+        }
+        return mobTemplatesByCode.get(code);
     }
 
     public List<MobSpawnGroup> spawnGroups() {
@@ -174,6 +192,7 @@ public final class ContentService {
                     resultSet.getInt("drop_slots"),
                     List.copyOf(groupedEntries.getOrDefault(id, List.of()))
                 ));
+                lootTablesByName.put(resultSet.getString("name"), lootTablesById.get(id));
             }
         }
     }
@@ -202,6 +221,7 @@ public final class ContentService {
                     true
                 );
                 mobTemplatesById.put(mobTemplate.id(), mobTemplate);
+                mobTemplatesByCode.put(mobTemplate.code(), mobTemplate);
             }
         }
     }

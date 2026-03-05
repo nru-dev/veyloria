@@ -35,6 +35,11 @@ public final class VeyloriaClientState {
     private final Map<UUID, ResourceBars> barsByPlayer = new HashMap<>();
     private final ItemStack[] loadoutItems = new ItemStack[PlayerLoadoutData.SLOT_COUNT];
     private ZoneAnnouncement zoneAnnouncement;
+    private String currentZoneName = "";
+    private String currentZoneRange = "";
+    private String currentStructureId = "";
+    private String currentStructureDisplayName = "";
+    private String currentStructureLocalizedName = "";
 
     private VeyloriaClientState() {
         clearLoadout();
@@ -63,6 +68,11 @@ public final class VeyloriaClientState {
         notifications.clear();
         barsByPlayer.clear();
         zoneAnnouncement = null;
+        currentZoneName = "";
+        currentZoneRange = "";
+        currentStructureId = "";
+        currentStructureDisplayName = "";
+        currentStructureLocalizedName = "";
         clearLoadout();
     }
 
@@ -245,6 +255,53 @@ public final class VeyloriaClientState {
 
     public ZoneAnnouncement zoneAnnouncement() {
         return zoneAnnouncement;
+    }
+
+    public void setZoneContext(String zoneName, String levelRange) {
+        currentZoneName = zoneName == null ? "" : zoneName;
+        currentZoneRange = levelRange == null ? "" : levelRange;
+    }
+
+    public void setStructureContext(String structureId, String displayName, String localizedName) {
+        currentStructureId = structureId == null ? "" : structureId;
+        currentStructureDisplayName = displayName == null ? "" : displayName;
+        currentStructureLocalizedName = localizedName == null ? "" : localizedName;
+        if (currentStructureId.isBlank()) {
+            currentStructureDisplayName = "";
+            currentStructureLocalizedName = "";
+        } else if (currentStructureDisplayName.isBlank()) {
+            currentStructureDisplayName = currentStructureId;
+        }
+    }
+
+    public String currentZoneName() {
+        return currentZoneName;
+    }
+
+    public String currentZoneRange() {
+        return currentZoneRange;
+    }
+
+    public String currentStructureId() {
+        return currentStructureId;
+    }
+
+    public String currentStructureDisplayName() {
+        return currentStructureDisplayName;
+    }
+
+    public String currentStructureLocalizedName() {
+        return currentStructureLocalizedName;
+    }
+
+    public String activeLocationLabel() {
+        if (!currentStructureDisplayName.isBlank()) {
+            return currentStructureDisplayName;
+        }
+        if (!currentZoneName.isBlank()) {
+            return currentZoneName;
+        }
+        return "Неизвестно";
     }
 
     public void prune(long gameTick) {

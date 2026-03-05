@@ -20,6 +20,16 @@
     "enabled": true
   },
   {
+    "code": "dungeon_cave",
+    "name": "Вход в подземелье",
+    "structure_type": "dungeon_entrance",
+    "schematic_file": "generated:dungeon_cave",
+    "size_x": 21,
+    "size_y": 12,
+    "size_z": 21,
+    "enabled": true
+  },
+  {
     "code": "town",
     "name": "Town",
     "structure_type": "city",

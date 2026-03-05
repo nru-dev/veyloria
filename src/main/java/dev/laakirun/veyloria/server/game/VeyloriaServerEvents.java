@@ -23,6 +23,7 @@ import dev.laakirun.veyloria.server.content.MobSpawnGroup;
 import dev.laakirun.veyloria.server.content.MobTemplate;
 import dev.laakirun.veyloria.server.db.SeedImporter;
 import dev.laakirun.veyloria.server.profile.ExperienceGainResult;
+import dev.laakirun.veyloria.server.structure.StructureService;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
@@ -117,6 +118,7 @@ public final class VeyloriaServerEvents {
     private final java.util.Map<UUID, Long> suppressKnockbackUntilTickByPlayer = new ConcurrentHashMap<>();
     private final java.util.Map<UUID, Long> playerCombatUntilTickByPlayer = new ConcurrentHashMap<>();
     private final java.util.Map<UUID, Integer> lastZoneByPlayer = new ConcurrentHashMap<>();
+    private final java.util.Map<UUID, String> lastStructureByPlayer = new ConcurrentHashMap<>();
     private volatile boolean locateAliasesRegistered;
 
     private long lastSpawnTick;
@@ -132,6 +134,13 @@ public final class VeyloriaServerEvents {
             return;
         }
         INSTANCE.performMeleeAttack(player, null);
+    }
+
+    public static boolean isPlayerInCombat(ServerPlayer player, long gameTime) {
+        if (INSTANCE == null || player == null) {
+            return false;
+        }
+        return INSTANCE.isPlayerInCombat(player.getUUID(), gameTime);
     }
 
     @SubscribeEvent
@@ -256,6 +265,10 @@ public final class VeyloriaServerEvents {
         if (!(event.getEntity() instanceof ServerPlayer player)) {
             return;
         }
+        var runtime = VeyloriaServerRuntime.instance();
+        if (runtime.dungeonService() != null) {
+            runtime.dungeonService().onPlayerLoggedOut(player.getUUID());
+        }
         VeyloriaServerRuntime.instance().partyService().removeMember(player.getUUID());
         VeyloriaServerRuntime.instance().authService().logout(player.getUUID());
         VeyloriaServerRuntime.instance().characterService().unload(player.getUUID());
@@ -267,6 +280,7 @@ public final class VeyloriaServerEvents {
         suppressKnockbackUntilTickByPlayer.remove(player.getUUID());
         playerCombatUntilTickByPlayer.remove(player.getUUID());
         lastZoneByPlayer.remove(player.getUUID());
+        lastStructureByPlayer.remove(player.getUUID());
         invalidateBarsCache(player.getUUID());
     }
 
@@ -298,9 +312,13 @@ public final class VeyloriaServerEvents {
         suppressKnockbackUntilTickByPlayer.clear();
         playerCombatUntilTickByPlayer.clear();
         lastZoneByPlayer.clear();
+        lastStructureByPlayer.clear();
         locateAliasesRegistered = false;
         if (runtime.structureService() != null) {
             runtime.structureService().forceReload(null);
+        }
+        if (runtime.dungeonService() != null) {
+            runtime.dungeonService().reset();
         }
     }
 
@@ -315,6 +333,7 @@ public final class VeyloriaServerEvents {
         var gearDropService = runtime.gearDropService();
         var playerLoadoutService = runtime.playerLoadoutService();
         var structureService = runtime.structureService();
+        var dungeonService = runtime.dungeonService();
         if (serverConfig == null
             || authService == null
             || characterService == null
@@ -322,7 +341,8 @@ public final class VeyloriaServerEvents {
             || testWorldLayoutService == null
             || gearDropService == null
             || playerLoadoutService == null
-            || structureService == null) {
+            || structureService == null
+            || dungeonService == null) {
             return;
         }
         MinecraftServer server = event.getServer();
@@ -336,6 +356,7 @@ public final class VeyloriaServerEvents {
         var sessionManager = authService.sessionManager();
         testWorldLayoutService.tick(server);
         structureService.tick(server);
+        dungeonService.tick(server);
         gearDropService.tick(server);
         List<ServerPlayer> players = server.getPlayerList().getPlayers();
         for (ServerPlayer player : players) {
@@ -345,9 +366,11 @@ public final class VeyloriaServerEvents {
             boolean authenticated = sessionManager.isAuthenticated(player.getUUID());
             if (!authenticated) {
                 lastZoneByPlayer.remove(player.getUUID());
+                lastStructureByPlayer.remove(player.getUUID());
                 continue;
             }
             syncZoneAnnouncement(player);
+            syncStructureAnnouncement(player);
             CharacterProfile profile = characterService.loadedProfile(player.getUUID());
             if (profile != null) {
                 playerLoadoutService.tick(player, profile.level());
@@ -394,6 +417,10 @@ public final class VeyloriaServerEvents {
         if (!(event.getEntity() instanceof Mob mob)) {
             return;
         }
+        var dungeonService = VeyloriaServerRuntime.instance().dungeonService();
+        if (dungeonService != null && dungeonService.isDungeonEntity(mob)) {
+            return;
+        }
         MobSpawnService spawnService = VeyloriaServerRuntime.instance().mobSpawnService();
         if (spawnService == null) {
             event.setCanceled(true);
@@ -413,11 +440,7 @@ public final class VeyloriaServerEvents {
         if (!(event.getEntity().level() instanceof ServerLevel)) {
             return;
         }
-        MobSpawnService spawnService = VeyloriaServerRuntime.instance().mobSpawnService();
-        if (spawnService == null) {
-            return;
-        }
-        MobTemplate template = spawnService.template(event.getEntity().getUUID());
+        MobTemplate template = templateForEntity(event.getEntity());
         if (template == null) {
             return;
         }
@@ -508,7 +531,7 @@ public final class VeyloriaServerEvents {
         if (player.level() instanceof ServerLevel level) {
             showDamageNumber(level, target, roll.damage(), roll.critical());
             double threat = roll.damage() * threatModifier(weapon);
-            runtime.mobSpawnService().recordHit(level, target.getUUID(), player.getUUID(), gameTime, threat);
+            recordManagedHit(level, target.getUUID(), player.getUUID(), gameTime, threat);
             applyMeleeSpecials(level, player, target, weapon, damageSource, roll.damage(), gameTime);
         }
         if (template.hostilityType() == HostilityType.NEUTRAL) {
@@ -545,7 +568,7 @@ public final class VeyloriaServerEvents {
                     && targetingService.isLockCandidate(player, lockedTarget, targetingProfile)
                     && (!targetingProfile.requireLosForLock()
                     || targetingService.hasLineOfSight(player, lockedTarget, TargetingService.defaultTargetPoint(lockedTarget)))) {
-                    MobTemplate lockedTemplate = spawnService.template(lockedTarget.getUUID());
+                    MobTemplate lockedTemplate = templateForEntity(lockedTarget);
                     if (lockedTemplate != null && (!(lockedTarget instanceof Mob lockedMob) || isAttackableByPlayers(lockedMob))) {
                         targetState.update(lockedTarget.getUUID(), gameTime);
                         return new ResolvedMeleeTarget(lockedTarget, lockedTemplate);
@@ -564,7 +587,7 @@ public final class VeyloriaServerEvents {
         if (!isWithinMeleeReach(player, livingTarget)) {
             return null;
         }
-        MobTemplate template = spawnService.template(livingTarget.getUUID());
+        MobTemplate template = templateForEntity(livingTarget);
         if (template == null) {
             return null;
         }
@@ -592,7 +615,7 @@ public final class VeyloriaServerEvents {
         double bestScore = Double.MAX_VALUE;
 
         for (Mob mob : level.getEntitiesOfClass(Mob.class, scan, Mob::isAlive)) {
-            MobTemplate template = spawnService.template(mob.getUUID());
+            MobTemplate template = templateForEntity(mob);
             if (template == null || template.hostilityType() == HostilityType.FRIENDLY) {
                 continue;
             }
@@ -646,8 +669,8 @@ public final class VeyloriaServerEvents {
     @SubscribeEvent
     public void onIncomingDamage(LivingIncomingDamageEvent event) {
         Entity sourceEntity = event.getSource().getEntity();
-        MobTemplate sourceTemplate = sourceEntity == null ? null : VeyloriaServerRuntime.instance().mobSpawnService().template(sourceEntity.getUUID());
-        MobTemplate targetTemplate = VeyloriaServerRuntime.instance().mobSpawnService().template(event.getEntity().getUUID());
+        MobTemplate sourceTemplate = templateForEntity(sourceEntity);
+        MobTemplate targetTemplate = templateForEntity(event.getEntity());
         if (targetTemplate != null && event.getEntity().level() instanceof ServerLevel level
             && VeyloriaServerRuntime.instance().mobSpawnService().isEvading(event.getEntity().getUUID(), level.getGameTime())) {
             event.setCanceled(true);
@@ -673,7 +696,7 @@ public final class VeyloriaServerEvents {
         }
 
         if (sourceEntity instanceof ServerPlayer playerSource && event.getEntity() instanceof LivingEntity target) {
-            targetTemplate = VeyloriaServerRuntime.instance().mobSpawnService().template(target.getUUID());
+            targetTemplate = templateForEntity(target);
             if (targetTemplate != null) {
                 long gameTime = target.level().getGameTime();
                 markPlayerInCombat(playerSource.getUUID(), gameTime);
@@ -752,7 +775,7 @@ public final class VeyloriaServerEvents {
         if (attacker == null) {
             return;
         }
-        MobTemplate sourceTemplate = VeyloriaServerRuntime.instance().mobSpawnService().template(attacker.getUUID());
+        MobTemplate sourceTemplate = templateForEntity(attacker);
         if (sourceTemplate == null || sourceTemplate.hostilityType() == HostilityType.FRIENDLY) {
             return;
         }
@@ -809,6 +832,10 @@ public final class VeyloriaServerEvents {
     @SubscribeEvent
     public void onMobDeath(LivingDeathEvent event) {
         if (!(event.getEntity().level() instanceof ServerLevel level)) {
+            return;
+        }
+        var dungeonService = VeyloriaServerRuntime.instance().dungeonService();
+        if (dungeonService != null && dungeonService.handleMobDeath(level, event.getEntity())) {
             return;
         }
         MobInstance instance = VeyloriaServerRuntime.instance().mobSpawnService().remove(event.getEntity().getUUID());
@@ -942,11 +969,15 @@ public final class VeyloriaServerEvents {
         if (!(candidate instanceof Mob mob)) {
             return false;
         }
-        MobTemplate template = spawnService.template(mob.getUUID());
+        MobTemplate template = templateForEntity(mob);
         if (template == null || template.hostilityType() == HostilityType.FRIENDLY) {
             return false;
         }
-        return !spawnService.isEvading(mob.getUUID(), gameTime);
+        MobTemplate runtimeTemplate = VeyloriaServerRuntime.instance().mobSpawnService().template(mob.getUUID());
+        if (runtimeTemplate != null) {
+            return !spawnService.isEvading(mob.getUUID(), gameTime);
+        }
+        return true;
     }
 
     private void syncTargetMarker(ServerPlayer player, UUID targetUuid, long gameTime) {
@@ -959,6 +990,28 @@ public final class VeyloriaServerEvents {
         }
         ServerMarkers.sendTarget(player, targetUuid);
         targetMarkerByPlayer.put(playerUuid, new TargetMarkerCacheEntry(targetUuid, gameTime));
+    }
+
+    private MobTemplate templateForEntity(Entity entity) {
+        if (entity == null) {
+            return null;
+        }
+        VeyloriaServerRuntime runtime = VeyloriaServerRuntime.instance();
+        MobTemplate template = runtime.mobSpawnService() == null ? null : runtime.mobSpawnService().template(entity.getUUID());
+        if (template != null) {
+            return template;
+        }
+        return runtime.dungeonService() == null ? null : runtime.dungeonService().template(entity.getUUID());
+    }
+
+    private void recordManagedHit(ServerLevel level, UUID targetUuid, UUID playerUuid, long gameTime, double threat) {
+        VeyloriaServerRuntime runtime = VeyloriaServerRuntime.instance();
+        if (runtime.mobSpawnService() != null) {
+            runtime.mobSpawnService().recordHit(level, targetUuid, playerUuid, gameTime, threat);
+        }
+        if (runtime.dungeonService() != null) {
+            runtime.dungeonService().recordPlayerHit(targetUuid, gameTime);
+        }
     }
 
     private void tryReplaceArrowWithHoming(EntityJoinLevelEvent event, Arrow arrow) {
@@ -1300,6 +1353,30 @@ public final class VeyloriaServerEvents {
         );
     }
 
+    private void syncStructureAnnouncement(ServerPlayer player) {
+        if (!(player.level() instanceof ServerLevel level)) {
+            return;
+        }
+        StructureService structureService = VeyloriaServerRuntime.instance().structureService();
+        if (structureService == null) {
+            return;
+        }
+        StructureService.StructurePresence structure = structureService.structureAt(level, player.getX(), player.getY(), player.getZ());
+        String currentStructureId = structure == null ? "" : structure.structureId();
+        String previousStructureId = lastStructureByPlayer.put(player.getUUID(), currentStructureId);
+        if (Objects.equals(previousStructureId, currentStructureId)) {
+            return;
+        }
+        if (currentStructureId.isBlank()) {
+            if (previousStructureId == null || previousStructureId.isBlank()) {
+                return;
+            }
+            ServerMarkers.sendStructure(player, "", "", "");
+            return;
+        }
+        ServerMarkers.sendStructure(player, structure.structureId(), structure.displayName(), structure.localizedName());
+    }
+
     private static void disableHunger(ServerPlayer player) {
         if (player.getFoodData().getFoodLevel() != 20) {
             player.getFoodData().setFoodLevel(20);
@@ -1413,7 +1490,7 @@ public final class VeyloriaServerEvents {
             double splash = baseDamage * splashFactor;
             if (mob.hurt(source, (float) splash)) {
                 showDamageNumber(level, mob, splash, false);
-                VeyloriaServerRuntime.instance().mobSpawnService().recordHit(level, mob.getUUID(), player.getUUID(), gameTime, splash * threatModifier(weapon));
+                recordManagedHit(level, mob.getUUID(), player.getUUID(), gameTime, splash * threatModifier(weapon));
                 applied++;
             }
         }
@@ -1425,7 +1502,7 @@ public final class VeyloriaServerEvents {
                     18, 0.8D, 0.5D, 0.8D, 0.02D);
                 if (primaryTarget.isAlive() && primaryTarget.hurt(source, (float) (baseDamage * 0.18D))) {
                     showDamageNumber(level, primaryTarget, baseDamage * 0.18D, false);
-                    VeyloriaServerRuntime.instance().mobSpawnService().recordHit(level, primaryTarget.getUUID(), player.getUUID(),
+                    recordManagedHit(level, primaryTarget.getUUID(), player.getUUID(),
                         gameTime, baseDamage * 0.18D * threatModifier(weapon));
                 }
             }
@@ -1452,7 +1529,7 @@ public final class VeyloriaServerEvents {
             return false;
         }
         showDamageNumber(level, target, roll.damage(), roll.critical());
-        VeyloriaServerRuntime.instance().mobSpawnService().recordHit(level, target.getUUID(), player.getUUID(), gameTime, roll.damage());
+        recordManagedHit(level, target.getUUID(), player.getUUID(), gameTime, roll.damage());
         spawnLineParticles(level, player.getEyePosition(), target.getEyePosition(), ParticleTypes.CRIT, 0.1D);
 
         if (weapon.aoeTargets() > 0 && ThreadLocalRandom.current().nextDouble() <= weapon.aoeChance()) {
@@ -1469,7 +1546,7 @@ public final class VeyloriaServerEvents {
                 double splash = roll.damage() * 0.45D;
                 if (mob.hurt(source, (float) splash)) {
                     showDamageNumber(level, mob, splash, false);
-                    VeyloriaServerRuntime.instance().mobSpawnService().recordHit(level, mob.getUUID(), player.getUUID(), gameTime, splash);
+                    recordManagedHit(level, mob.getUUID(), player.getUUID(), gameTime, splash);
                     spawnLineParticles(level, target.getEyePosition(), mob.getEyePosition(), ParticleTypes.CRIT, 0.08D);
                     hits++;
                 }
@@ -1489,7 +1566,7 @@ public final class VeyloriaServerEvents {
                 double chainDamage = roll.damage() * 0.30D;
                 if (chainedTarget.hurt(source, (float) chainDamage)) {
                     showDamageNumber(level, chainedTarget, chainDamage, false);
-                    VeyloriaServerRuntime.instance().mobSpawnService().recordHit(level, chainedTarget.getUUID(), player.getUUID(), gameTime, chainDamage);
+                    recordManagedHit(level, chainedTarget.getUUID(), player.getUUID(), gameTime, chainDamage);
                     spawnLineParticles(level, target.getEyePosition(), chainedTarget.getEyePosition(), ParticleTypes.ELECTRIC_SPARK, 0.05D);
                     chainedHits++;
                 }
@@ -2026,7 +2103,7 @@ public final class VeyloriaServerEvents {
     }
 
     private boolean isAttackableByPlayers(Mob mob) {
-        MobTemplate template = VeyloriaServerRuntime.instance().mobSpawnService().template(mob.getUUID());
+        MobTemplate template = templateForEntity(mob);
         if (template == null || template.hostilityType() == HostilityType.FRIENDLY) {
             return false;
         }

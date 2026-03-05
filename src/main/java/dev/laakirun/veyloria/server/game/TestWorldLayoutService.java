@@ -121,6 +121,26 @@ public final class TestWorldLayoutService {
         return ZONE_LEVEL_RANGES[zoneIndex - 1];
     }
 
+    public static int zoneMaxLevel(int zoneIndex) {
+        if (zoneIndex < 1 || zoneIndex > ZONE_COUNT) {
+            return 1;
+        }
+        String range = ZONE_LEVEL_RANGES[zoneIndex - 1];
+        int separator = range.indexOf('-');
+        if (separator <= 0 || separator >= range.length() - 1) {
+            try {
+                return Math.max(1, Integer.parseInt(range.trim()));
+            } catch (NumberFormatException ignored) {
+                return 1;
+            }
+        }
+        try {
+            return Math.max(1, Integer.parseInt(range.substring(separator + 1).trim()));
+        } catch (NumberFormatException ignored) {
+            return 1;
+        }
+    }
+
     public static String zoneName(int zoneIndex) {
         if (zoneIndex < 1 || zoneIndex > ZONE_COUNT) {
             return "Неизвестно";

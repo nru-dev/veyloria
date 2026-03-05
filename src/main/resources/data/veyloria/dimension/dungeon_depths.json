@@ -1,0 +1,29 @@
+{
+  "type": "veyloria:dungeon_depths",
+  "generator": {
+    "type": "minecraft:flat",
+    "settings": {
+      "biome": "minecraft:dripstone_caves",
+      "features": false,
+      "lakes": false,
+      "layers": [
+        {
+          "block": "minecraft:bedrock",
+          "height": 1
+        },
+        {
+          "block": "minecraft:deepslate",
+          "height": 63
+        },
+        {
+          "block": "minecraft:stone",
+          "height": 320
+        }
+      ],
+      "structure_overrides": [],
+      "structures": {
+        "structures": {}
+      }
+    }
+  }
+}

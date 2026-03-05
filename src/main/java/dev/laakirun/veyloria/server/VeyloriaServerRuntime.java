@@ -9,6 +9,7 @@ import dev.laakirun.veyloria.server.content.ContentService;
 import dev.laakirun.veyloria.server.db.DatabaseManager;
 import dev.laakirun.veyloria.server.db.MigrationService;
 import dev.laakirun.veyloria.server.db.SeedImporter;
+import dev.laakirun.veyloria.server.dungeon.DungeonService;
 import dev.laakirun.veyloria.server.game.AuthLockService;
 import dev.laakirun.veyloria.server.game.GearDropService;
 import dev.laakirun.veyloria.server.game.ItemFactory;
@@ -45,6 +46,7 @@ public final class VeyloriaServerRuntime {
     private GearDropService gearDropService;
     private PlayerLoadoutService playerLoadoutService;
     private StructureService structureService;
+    private DungeonService dungeonService;
     private TargetingService targetingService;
     private TargetingProfile targetingProfile;
 
@@ -78,6 +80,7 @@ public final class VeyloriaServerRuntime {
         this.gearDropService = new GearDropService();
         this.playerLoadoutService = new PlayerLoadoutService();
         this.structureService = new StructureService(databaseManager);
+        this.dungeonService = new DungeonService();
         this.targetingService = new TargetingService();
         this.targetingProfile = TargetingProfile.defaults();
     }
@@ -160,6 +163,10 @@ public final class VeyloriaServerRuntime {
 
     public StructureService structureService() {
         return structureService;
+    }
+
+    public DungeonService dungeonService() {
+        return dungeonService;
     }
 
     public TargetingService targetingService() {
