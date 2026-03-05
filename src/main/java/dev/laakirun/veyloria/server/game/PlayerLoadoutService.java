@@ -9,7 +9,6 @@ import dev.laakirun.veyloria.common.registry.VeyloriaAttachments;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
-import net.minecraft.core.component.DataComponents;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.tags.ItemTags;
 import net.minecraft.world.InteractionHand;
@@ -45,10 +44,7 @@ public final class PlayerLoadoutService {
     }
 
     public void sanitizePickupMirrorSlot(ServerPlayer player) {
-        PlayerLoadoutData loadout = loadout(player);
-        if (moveUnexpectedMirrorItemToStorage(player, loadout)) {
-            applyLoadout(player);
-        }
+        // Custom mirror slot logic disabled: vanilla inventory/hotbar is fully available.
     }
 
     public void resumeConsumableUse(ServerPlayer player) {
@@ -56,7 +52,6 @@ public final class PlayerLoadoutService {
         if (state == null) {
             return;
         }
-        player.getInventory().selected = PlayerLoadoutData.ACTIVE_MIRROR_INVENTORY_SLOT;
         player.startUsingItem(InteractionHand.OFF_HAND);
     }
 
@@ -70,15 +65,13 @@ public final class PlayerLoadoutService {
     public void tick(ServerPlayer player, int playerLevel) {
         PlayerLoadoutData loadout = loadout(player);
         ConsumableUseState consumableUseState = consumableUseStates.get(player.getUUID());
-        boolean changed = clearOffhand(player, loadout, consumableUseState);
+        boolean changed = false;
         if (consumableUseState == null) {
             syncRuntimeChanges(player, loadout);
         } else {
             changed |= syncConsumableUse(player, loadout, consumableUseState);
         }
-        changed |= reserveMirrorSlot(player, loadout);
         changed |= stripTooHighLevel(player, loadout, playerLevel);
-        player.getInventory().selected = PlayerLoadoutData.ACTIVE_MIRROR_INVENTORY_SLOT;
         if (consumableUseState != null && player.isUsingItem()) {
             updateMirrorState(player, loadout);
             return;
@@ -252,11 +245,6 @@ public final class PlayerLoadoutService {
 
     private void applyLoadout(ServerPlayer player) {
         PlayerLoadoutData loadout = loadout(player);
-        ConsumableUseState consumableUseState = consumableUseStates.get(player.getUUID());
-        reserveMirrorSlot(player, loadout);
-        clearOffhand(player, loadout, consumableUseState);
-        player.getInventory().selected = PlayerLoadoutData.ACTIVE_MIRROR_INVENTORY_SLOT;
-        player.getInventory().setItem(PlayerLoadoutData.ACTIVE_MIRROR_INVENTORY_SLOT, loadout.activeItem().copy());
         player.setItemSlot(EquipmentSlot.HEAD, loadout.getItem(PlayerLoadoutData.SLOT_HELMET).copy());
         player.setItemSlot(EquipmentSlot.CHEST, loadout.getItem(PlayerLoadoutData.SLOT_CHEST).copy());
         player.setItemSlot(EquipmentSlot.LEGS, loadout.getItem(PlayerLoadoutData.SLOT_LEGS).copy());
@@ -270,12 +258,6 @@ public final class PlayerLoadoutService {
         MirrorState previous = mirrorStates.get(player.getUUID());
         if (previous == null) {
             return;
-        }
-        ItemStack activeMirror = player.getInventory().getItem(PlayerLoadoutData.ACTIVE_MIRROR_INVENTORY_SLOT);
-        if (!ItemStack.matches(previous.mirrorItem(), activeMirror)
-            && isValidForLoadoutSlot(loadout.activeSlot(), activeMirror)
-            && isExpectedMirrorMutation(previous.mirrorItem(), activeMirror)) {
-            loadout.setItem(loadout.activeSlot(), activeMirror);
         }
         syncArmorChanges(player, loadout, previous);
     }
@@ -309,8 +291,7 @@ public final class PlayerLoadoutService {
     }
 
     private boolean mirrorsMatch(ServerPlayer player, PlayerLoadoutData loadout) {
-        return ItemStack.matches(player.getInventory().getItem(PlayerLoadoutData.ACTIVE_MIRROR_INVENTORY_SLOT), loadout.activeItem())
-            && ItemStack.matches(player.getItemBySlot(EquipmentSlot.HEAD), loadout.getItem(PlayerLoadoutData.SLOT_HELMET))
+        return ItemStack.matches(player.getItemBySlot(EquipmentSlot.HEAD), loadout.getItem(PlayerLoadoutData.SLOT_HELMET))
             && ItemStack.matches(player.getItemBySlot(EquipmentSlot.CHEST), loadout.getItem(PlayerLoadoutData.SLOT_CHEST))
             && ItemStack.matches(player.getItemBySlot(EquipmentSlot.LEGS), loadout.getItem(PlayerLoadoutData.SLOT_LEGS))
             && ItemStack.matches(player.getItemBySlot(EquipmentSlot.FEET), loadout.getItem(PlayerLoadoutData.SLOT_BOOTS));
@@ -331,57 +312,6 @@ public final class PlayerLoadoutService {
         return changed;
     }
 
-    private boolean clearOffhand(ServerPlayer player, PlayerLoadoutData loadout, ConsumableUseState consumableUseState) {
-        ItemStack offhand = player.getOffhandItem();
-        if (offhand.isEmpty()) {
-            return false;
-        }
-        if (consumableUseState != null) {
-            return false;
-        }
-        MirrorState mirror = mirrorStates.get(player.getUUID());
-        boolean mirroredActiveItem = ItemStack.matches(offhand, loadout.activeItem())
-            || (mirror != null && ItemStack.matches(offhand, mirror.mirrorItem()));
-        player.setItemSlot(EquipmentSlot.OFFHAND, ItemStack.EMPTY);
-        if (mirroredActiveItem) {
-            player.getInventory().setItem(PlayerLoadoutData.ACTIVE_MIRROR_INVENTORY_SLOT, loadout.activeItem().copy());
-        } else {
-            placeInStorageOrDrop(player, offhand.copy());
-        }
-        return true;
-    }
-
-    private boolean reserveMirrorSlot(ServerPlayer player, PlayerLoadoutData loadout) {
-        ItemStack current = player.getInventory().getItem(PlayerLoadoutData.ACTIVE_MIRROR_INVENTORY_SLOT);
-        if (current.isEmpty()) {
-            return false;
-        }
-        MirrorState mirror = mirrorStates.get(player.getUUID());
-        boolean expectedActive = ItemStack.matches(current, loadout.activeItem());
-        boolean knownMirror = mirror != null && ItemStack.matches(current, mirror.mirrorItem());
-        if (expectedActive || knownMirror) {
-            return false;
-        }
-        player.getInventory().setItem(PlayerLoadoutData.ACTIVE_MIRROR_INVENTORY_SLOT, ItemStack.EMPTY);
-        placeInStorageOrDrop(player, current.copy());
-        return true;
-    }
-
-    private boolean moveUnexpectedMirrorItemToStorage(ServerPlayer player, PlayerLoadoutData loadout) {
-        ItemStack current = player.getInventory().getItem(PlayerLoadoutData.ACTIVE_MIRROR_INVENTORY_SLOT);
-        if (current.isEmpty()) {
-            return false;
-        }
-        MirrorState mirror = mirrorStates.get(player.getUUID());
-        ItemStack previousMirror = mirror == null ? loadout.activeItem() : mirror.mirrorItem();
-        if (isExpectedMirrorMutation(previousMirror, current)) {
-            return false;
-        }
-        player.getInventory().setItem(PlayerLoadoutData.ACTIVE_MIRROR_INVENTORY_SLOT, ItemStack.EMPTY);
-        placeInStorageOrDrop(player, current.copy());
-        return true;
-    }
-
     private void placeInStorageOrDrop(ServerPlayer player, ItemStack stack) {
         if (stack.isEmpty()) {
             return;
@@ -397,7 +327,7 @@ public final class PlayerLoadoutService {
         if (incoming.isEmpty() || !incoming.isStackable()) {
             return;
         }
-        for (int slot = 1; slot < player.getInventory().getContainerSize(); slot++) {
+        for (int slot = 0; slot < player.getInventory().getContainerSize(); slot++) {
             ItemStack stored = player.getInventory().getItem(slot);
             if (stored.isEmpty() || !ItemStack.isSameItemSameComponents(stored, incoming)) {
                 continue;
@@ -416,7 +346,7 @@ public final class PlayerLoadoutService {
     }
 
     private boolean placeIntoEmptyStorageSlot(ServerPlayer player, ItemStack incoming) {
-        for (int slot = 1; slot < player.getInventory().getContainerSize(); slot++) {
+        for (int slot = 0; slot < player.getInventory().getContainerSize(); slot++) {
             if (!player.getInventory().getItem(slot).isEmpty()) {
                 continue;
             }
@@ -429,7 +359,6 @@ public final class PlayerLoadoutService {
 
     private void updateMirrorState(ServerPlayer player, PlayerLoadoutData loadout) {
         mirrorStates.put(player.getUUID(), new MirrorState(
-            loadout.activeItem().copy(),
             loadout.getItem(PlayerLoadoutData.SLOT_HELMET).copy(),
             loadout.getItem(PlayerLoadoutData.SLOT_CHEST).copy(),
             loadout.getItem(PlayerLoadoutData.SLOT_LEGS).copy(),
@@ -490,25 +419,6 @@ public final class PlayerLoadoutService {
         return useAnimation == UseAnim.EAT || useAnimation == UseAnim.DRINK;
     }
 
-    private static boolean isExpectedMirrorMutation(ItemStack previous, ItemStack current) {
-        if (previous == null || previous.isEmpty()) {
-            return current == null || current.isEmpty();
-        }
-        if (current == null || current.isEmpty()) {
-            return true;
-        }
-        if (!ItemStack.isSameItem(previous, current)) {
-            return false;
-        }
-        ItemStack previousNormalized = previous.copy();
-        ItemStack currentNormalized = current.copy();
-        previousNormalized.setCount(1);
-        currentNormalized.setCount(1);
-        previousNormalized.remove(DataComponents.DAMAGE);
-        currentNormalized.remove(DataComponents.DAMAGE);
-        return ItemStack.isSameItemSameComponents(previousNormalized, currentNormalized);
-    }
-
     private void completeConsumableUse(ServerPlayer player, PlayerLoadoutData loadout, ConsumableUseState consumableUseState) {
         storeConsumableOutcome(player, loadout, consumableUseState.slot(), player.getOffhandItem());
     }
@@ -541,7 +451,6 @@ public final class PlayerLoadoutService {
     }
 
     private record MirrorState(
-        ItemStack mirrorItem,
         ItemStack helmet,
         ItemStack chest,
         ItemStack legs,

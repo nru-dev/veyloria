@@ -205,6 +205,7 @@ public final class VeyloriaClientEvents {
             guiGraphics.drawCenteredString(minecraft.font, notification.text(), width / 2, notificationBaseY - index * 10, 0xFFFFFF);
             index++;
         }
+        drawZoneAnnouncement(guiGraphics, minecraft, width);
     }
 
     @SubscribeEvent
@@ -311,6 +312,14 @@ public final class VeyloriaClientEvents {
         }
         if (marker.startsWith("[veyloria:error]")) {
             state.setLastError(fieldValue(marker, "message"));
+            return;
+        }
+        if (marker.startsWith("[veyloria:zone]")) {
+            state.showZoneAnnouncement(
+                fieldValue(marker, "name"),
+                fieldValue(marker, "range"),
+                tickNow()
+            );
         }
     }
 
@@ -392,6 +401,57 @@ public final class VeyloriaClientEvents {
         if (fill > 0) {
             guiGraphics.fill(x, y, x + fill, y + height, fillColor);
         }
+    }
+
+    private static void drawZoneAnnouncement(GuiGraphics guiGraphics, Minecraft minecraft, int width) {
+        VeyloriaClientState.ZoneAnnouncement announcement = VeyloriaClientState.instance().zoneAnnouncement();
+        if (announcement == null) {
+            return;
+        }
+        long age = tickNow() - announcement.shownAtTick();
+        if (age < 0 || age >= VeyloriaClientState.ZoneAnnouncement.TOTAL_DURATION_TICKS) {
+            return;
+        }
+        double alpha = zoneAnnouncementAlpha(age);
+        if (alpha <= 0.01D) {
+            return;
+        }
+
+        String title = announcement.zoneName();
+        String subtitle = announcement.levelRange().isBlank() ? "" : "Уровни: " + announcement.levelRange();
+        int titleWidth = minecraft.font.width(title);
+        int subtitleWidth = subtitle.isBlank() ? 0 : minecraft.font.width(subtitle);
+        int contentWidth = Math.max(titleWidth, subtitleWidth);
+        int boxWidth = contentWidth + 24;
+        int boxHeight = subtitle.isBlank() ? 24 : 36;
+        int boxX = width / 2 - boxWidth / 2;
+        int boxY = 18;
+
+        int bgAlpha = Math.max(0, Math.min(255, (int) Math.round(alpha * 138.0D)));
+        int borderAlpha = Math.max(0, Math.min(255, (int) Math.round(alpha * 196.0D)));
+        guiGraphics.fill(boxX, boxY, boxX + boxWidth, boxY + boxHeight, (bgAlpha << 24));
+        guiGraphics.fill(boxX, boxY, boxX + boxWidth, boxY + 1, (borderAlpha << 24) | 0xD8C58B);
+        guiGraphics.fill(boxX, boxY + boxHeight - 1, boxX + boxWidth, boxY + boxHeight, (borderAlpha << 24) | 0xD8C58B);
+
+        int textAlpha = Math.max(0, Math.min(255, (int) Math.round(alpha * 255.0D)));
+        int titleColor = (textAlpha << 24) | 0xF7E6BA;
+        int subtitleColor = (textAlpha << 24) | 0xCFCFD4;
+        guiGraphics.drawCenteredString(minecraft.font, title, width / 2, boxY + 8, titleColor);
+        if (!subtitle.isBlank()) {
+            guiGraphics.drawCenteredString(minecraft.font, subtitle, width / 2, boxY + 20, subtitleColor);
+        }
+    }
+
+    private static double zoneAnnouncementAlpha(long age) {
+        if (age < VeyloriaClientState.ZoneAnnouncement.FADE_IN_TICKS) {
+            return age / (double) VeyloriaClientState.ZoneAnnouncement.FADE_IN_TICKS;
+        }
+        long fadeOutStart = VeyloriaClientState.ZoneAnnouncement.FADE_IN_TICKS + VeyloriaClientState.ZoneAnnouncement.HOLD_TICKS;
+        if (age < fadeOutStart) {
+            return 1.0D;
+        }
+        long fadeOutAge = age - fadeOutStart;
+        return 1.0D - (fadeOutAge / (double) VeyloriaClientState.ZoneAnnouncement.FADE_OUT_TICKS);
     }
 
     private static void syncMeleeAttackIntent(Minecraft minecraft) {

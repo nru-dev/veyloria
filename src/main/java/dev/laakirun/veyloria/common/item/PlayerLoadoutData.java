@@ -27,7 +27,6 @@ public final class PlayerLoadoutData implements INBTSerializable<CompoundTag> {
     public static final int SLOT_ACCESSORY_2 = 15;
     public static final int SLOT_AMMO = 16;
     public static final int SLOT_COUNT = 17;
-    public static final int ACTIVE_MIRROR_INVENTORY_SLOT = 0;
     public static final int AMMO_SLOT_MAX_STACK = 64;
 
     private static final String TAG_ACTIVE_SLOT = "activeWeaponSlot";

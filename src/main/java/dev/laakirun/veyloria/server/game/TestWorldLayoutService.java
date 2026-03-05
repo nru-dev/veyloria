@@ -36,8 +36,17 @@ public final class TestWorldLayoutService {
     public static final int FLAT_GRASS_Y = 3;
     public static final int FLAT_SPAWN_Y = FLAT_GRASS_Y + 1;
 
-    private static final String[] ZONE_LABELS = {
+    private static final String[] ZONE_LEVEL_RANGES = {
         "1-10", "10-25", "25-35", "35-45", "45-60", "60-70", "70-80"
+    };
+    private static final String[] ZONE_NAMES = {
+        "Луга Рассвета",
+        "Топи Серого Тростника",
+        "Хребет Стылых Ветров",
+        "Сумеречные Рубежи",
+        "Пепельные Просторы",
+        "Раскол Громовой Скалы",
+        "Цитадель Бури"
     };
 
     private static final int DECORATION_CHUNK_RADIUS = 6;
@@ -103,7 +112,21 @@ public final class TestWorldLayoutService {
         if (zoneIndex < 1 || zoneIndex > ZONE_COUNT) {
             return "Неизвестно";
         }
-        return ZONE_LABELS[zoneIndex - 1];
+        return zoneLevelRange(zoneIndex);
+    }
+
+    public static String zoneLevelRange(int zoneIndex) {
+        if (zoneIndex < 1 || zoneIndex > ZONE_COUNT) {
+            return "Неизвестно";
+        }
+        return ZONE_LEVEL_RANGES[zoneIndex - 1];
+    }
+
+    public static String zoneName(int zoneIndex) {
+        if (zoneIndex < 1 || zoneIndex > ZONE_COUNT) {
+            return "Неизвестно";
+        }
+        return ZONE_NAMES[zoneIndex - 1];
     }
 
     public void ensureStarterSpawn(ServerPlayer player) {

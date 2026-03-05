@@ -4,7 +4,6 @@ import com.mojang.logging.LogUtils;
 import dev.laakirun.veyloria.common.VeyloriaConstants;
 import dev.laakirun.veyloria.common.registry.VeyloriaAttachments;
 import dev.laakirun.veyloria.common.registry.VeyloriaEntityTypes;
-import dev.laakirun.veyloria.common.registry.VeyloriaMenus;
 import dev.laakirun.veyloria.server.VeyloriaServerRuntime;
 import dev.laakirun.veyloria.server.config.ConfigService;
 import dev.laakirun.veyloria.server.game.VeyloriaServerEvents;
@@ -23,7 +22,6 @@ public final class VeyloriaMod {
     public VeyloriaMod(IEventBus modEventBus) {
         VeyloriaAttachments.register(modEventBus);
         VeyloriaEntityTypes.register(modEventBus);
-        VeyloriaMenus.register(modEventBus);
         NeoForge.EVENT_BUS.register(ServerEvents.class);
         VeyloriaServerEvents.register();
         LOGGER.info("Initializing mod {}", VeyloriaConstants.MOD_ID);
