@@ -1,5 +1,6 @@
 package dev.laakirun.veyloria.server.game;
 
+import dev.laakirun.veyloria.common.entity.NpcEntity;
 import dev.laakirun.veyloria.server.VeyloriaServerRuntime;
 import dev.laakirun.veyloria.server.auth.AuthService;
 import dev.laakirun.veyloria.server.content.MobTemplate;
@@ -105,7 +106,7 @@ public final class CommonMobAiService {
     }
 
     public boolean isCommonOrElite(LivingEntity entity) {
-        if (!(entity instanceof Mob mob) || mob.isNoAi()) {
+        if (!(entity instanceof Mob mob) || mob.isNoAi() || mob instanceof NpcEntity) {
             return false;
         }
         MobRank rank = resolveRank(mob);
@@ -114,6 +115,11 @@ public final class CommonMobAiService {
 
     public boolean isAllied(Mob mob) {
         return mob != null && resolveDisposition(mob) == MobDisposition.ALLIED;
+    }
+
+    public String dispositionId(LivingEntity entity) {
+        MobDisposition disposition = resolveDisposition(entity);
+        return disposition == null ? "" : disposition.id();
     }
 
     public boolean isAttackableByPlayer(Mob mob, long gameTime) {

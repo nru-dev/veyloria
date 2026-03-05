@@ -15,5 +15,6 @@ public final class VeyloriaClientModEvents {
     @SubscribeEvent
     public static void onRegisterRenderers(EntityRenderersEvent.RegisterRenderers event) {
         event.registerEntityRenderer(VeyloriaEntityTypes.HOMING_ARROW.get(), HomingArrowRenderer::new);
+        event.registerEntityRenderer(VeyloriaEntityTypes.NPC.get(), NpcEntityRenderer::new);
     }
 }

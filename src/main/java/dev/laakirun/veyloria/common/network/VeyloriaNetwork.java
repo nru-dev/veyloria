@@ -45,6 +45,13 @@ public final class VeyloriaNetwork {
                     VeyloriaServerEvents.handleMeleeIntent(player);
                 }
             }));
+        registrar.playToServer(NpcActionC2SPayload.TYPE, NpcActionC2SPayload.STREAM_CODEC, (payload, context) ->
+            context.enqueueWork(() -> {
+                if (context.player() instanceof ServerPlayer player && VeyloriaServerRuntime.instance().npcService() != null) {
+                    VeyloriaServerRuntime.instance().npcService()
+                        .handleAction(player, payload.instanceId(), payload.actionId(), payload.payload(), payload.nonce());
+                }
+            }));
         registrar.playToClient(ConsumableUseStatePayload.TYPE, ConsumableUseStatePayload.STREAM_CODEC, (payload, context) ->
             context.enqueueWork(() -> {
                 if (payload.active()) {
@@ -62,6 +69,8 @@ public final class VeyloriaNetwork {
                     VeyloriaClientState.instance().setLoadout(loadout);
                 }
             }));
+        registrar.playToClient(QuestStateSyncPayload.TYPE, QuestStateSyncPayload.STREAM_CODEC, (payload, context) ->
+            context.enqueueWork(() -> VeyloriaClientState.instance().setQuestState(payload.stateTag())));
     }
 
     public static LoadoutSnapshotPayload loadoutSnapshot(PlayerLoadoutData loadout, HolderLookup.Provider provider) {
@@ -70,6 +79,10 @@ public final class VeyloriaNetwork {
 
     public static ConsumableUseStatePayload consumableUseState(int consumableSlot, boolean active) {
         return new ConsumableUseStatePayload(consumableSlot, active);
+    }
+
+    public static QuestStateSyncPayload questStateSync(CompoundTag stateTag) {
+        return new QuestStateSyncPayload(stateTag);
     }
 
     public record SelectActionSlotPayload(int actionSlot) implements CustomPacketPayload {
@@ -134,6 +147,40 @@ public final class VeyloriaNetwork {
 
         @Override
         public Type<LoadoutSnapshotPayload> type() {
+            return TYPE;
+        }
+    }
+
+    public record NpcActionC2SPayload(String instanceId, String actionId, String payload, long nonce) implements CustomPacketPayload {
+        public static final Type<NpcActionC2SPayload> TYPE =
+            new Type<>(ResourceLocation.fromNamespaceAndPath(VeyloriaConstants.MOD_ID, "npc_action_c2s"));
+        public static final StreamCodec<RegistryFriendlyByteBuf, NpcActionC2SPayload> STREAM_CODEC =
+            StreamCodec.composite(
+                ByteBufCodecs.STRING_UTF8,
+                NpcActionC2SPayload::instanceId,
+                ByteBufCodecs.STRING_UTF8,
+                NpcActionC2SPayload::actionId,
+                ByteBufCodecs.STRING_UTF8,
+                NpcActionC2SPayload::payload,
+                ByteBufCodecs.VAR_LONG,
+                NpcActionC2SPayload::nonce,
+                NpcActionC2SPayload::new
+            );
+
+        @Override
+        public Type<NpcActionC2SPayload> type() {
+            return TYPE;
+        }
+    }
+
+    public record QuestStateSyncPayload(CompoundTag stateTag) implements CustomPacketPayload {
+        public static final Type<QuestStateSyncPayload> TYPE =
+            new Type<>(ResourceLocation.fromNamespaceAndPath(VeyloriaConstants.MOD_ID, "quest_state_sync"));
+        public static final StreamCodec<RegistryFriendlyByteBuf, QuestStateSyncPayload> STREAM_CODEC =
+            StreamCodec.composite(ByteBufCodecs.COMPOUND_TAG, QuestStateSyncPayload::stateTag, QuestStateSyncPayload::new);
+
+        @Override
+        public Type<QuestStateSyncPayload> type() {
             return TYPE;
         }
     }

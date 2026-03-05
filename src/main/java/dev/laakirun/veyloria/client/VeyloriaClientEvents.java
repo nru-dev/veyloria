@@ -8,16 +8,20 @@ import dev.laakirun.veyloria.common.item.RpgItemData;
 import dev.laakirun.veyloria.common.model.BaseStats;
 import dev.laakirun.veyloria.common.model.EquipSlot;
 import dev.laakirun.veyloria.common.network.VeyloriaNetwork;
+import dev.laakirun.veyloria.server.npc.NpcService;
 import java.util.UUID;
 import net.minecraft.ChatFormatting;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.screens.ChatScreen;
 import net.minecraft.client.renderer.LevelRenderer;
 import net.minecraft.client.renderer.MultiBufferSource;
 import net.minecraft.client.renderer.RenderType;
 import net.minecraft.core.component.DataComponents;
+import net.minecraft.network.chat.ClickEvent;
 import net.minecraft.network.chat.Component;
+import net.minecraft.network.chat.Style;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.entity.LivingEntity;
@@ -36,6 +40,7 @@ import net.neoforged.neoforge.client.event.ClientTickEvent;
 import net.neoforged.neoforge.client.event.RenderGuiLayerEvent;
 import net.neoforged.neoforge.client.event.RenderLevelStageEvent;
 import net.neoforged.neoforge.client.event.RenderNameTagEvent;
+import net.neoforged.neoforge.client.event.ScreenEvent;
 import net.neoforged.neoforge.client.gui.VanillaGuiLayers;
 import net.neoforged.neoforge.event.entity.player.ItemTooltipEvent;
 import org.lwjgl.glfw.GLFW;
@@ -89,6 +94,28 @@ public final class VeyloriaClientEvents {
         String message = event.getMessage().getString();
         if (message.startsWith("[veyloria:")) {
             handleMarker(message);
+            event.setCanceled(true);
+        }
+    }
+
+    @SubscribeEvent
+    public static void onChatClick(ScreenEvent.MouseButtonPressed.Pre event) {
+        if (!(event.getScreen() instanceof ChatScreen) || event.getButton() != GLFW.GLFW_MOUSE_BUTTON_LEFT) {
+            return;
+        }
+        Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft == null || minecraft.gui == null || minecraft.getConnection() == null) {
+            return;
+        }
+        Style style = minecraft.gui.getChat().getClickedComponentStyleAt(event.getMouseX(), event.getMouseY());
+        if (style == null) {
+            return;
+        }
+        ClickEvent clickEvent = style.getClickEvent();
+        if (clickEvent == null || clickEvent.getAction() != ClickEvent.Action.OPEN_URL) {
+            return;
+        }
+        if (trySendNpcAction(clickEvent.getValue())) {
             event.setCanceled(true);
         }
     }
@@ -206,6 +233,7 @@ public final class VeyloriaClientEvents {
             index++;
         }
         drawZoneAnnouncement(guiGraphics, minecraft, width);
+        drawQuestOverlay(guiGraphics, minecraft);
     }
 
     @SubscribeEvent
@@ -454,6 +482,22 @@ public final class VeyloriaClientEvents {
         return 1.0D - (fadeOutAge / (double) VeyloriaClientState.ZoneAnnouncement.FADE_OUT_TICKS);
     }
 
+    private static void drawQuestOverlay(GuiGraphics guiGraphics, Minecraft minecraft) {
+        VeyloriaClientState.QuestEntry quest = VeyloriaClientState.instance().trackedQuest();
+        if (quest == null) {
+            return;
+        }
+        int x = 20;
+        int y = 20;
+        guiGraphics.drawString(minecraft.font, "Квест: " + quest.title(), x, y, 0xF2E5B8, false);
+        guiGraphics.drawString(minecraft.font, quest.objective(), x, y + 10, 0xDADADA, false);
+        String progress = quest.progress();
+        if (quest.readyToTurnIn()) {
+            progress = "Готово к сдаче";
+        }
+        guiGraphics.drawString(minecraft.font, progress, x, y + 20, quest.readyToTurnIn() ? 0xE8C24A : 0x9BCBFF, false);
+    }
+
     private static void syncMeleeAttackIntent(Minecraft minecraft) {
         if (minecraft == null || minecraft.player == null || minecraft.getConnection() == null) {
             attackKeyWasDown = false;
@@ -593,5 +637,40 @@ public final class VeyloriaClientEvents {
             case "wand" -> "Целительная палочка";
             default -> weaponType;
         };
+    }
+
+    private static boolean trySendNpcAction(String rawUrl) {
+        if (rawUrl == null || !rawUrl.startsWith(NpcService.ACTION_URL_PREFIX)) {
+            return false;
+        }
+        String payload = rawUrl.substring(NpcService.ACTION_URL_PREFIX.length());
+        String[] parts = payload.split("/");
+        if (parts.length < 3) {
+            return false;
+        }
+        String actionId = parts[0];
+        String actionPayload = "";
+        String instanceId;
+        String nonceRaw;
+        if (parts.length >= 4) {
+            actionPayload = "-".equals(parts[1]) ? "" : parts[1];
+            instanceId = parts[2];
+            nonceRaw = parts[3];
+        } else {
+            instanceId = parts[1];
+            nonceRaw = parts[2];
+        }
+        long nonce;
+        try {
+            nonce = Long.parseLong(nonceRaw);
+        } catch (NumberFormatException exception) {
+            return false;
+        }
+        Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft == null || minecraft.getConnection() == null) {
+            return false;
+        }
+        minecraft.getConnection().send(new VeyloriaNetwork.NpcActionC2SPayload(instanceId, actionId, actionPayload, nonce));
+        return true;
     }
 }

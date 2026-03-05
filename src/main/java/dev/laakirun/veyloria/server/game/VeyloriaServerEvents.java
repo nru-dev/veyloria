@@ -14,6 +14,7 @@ import dev.laakirun.veyloria.common.model.MobType;
 import dev.laakirun.veyloria.common.model.Rarity;
 import dev.laakirun.veyloria.common.config.RatesConfig;
 import dev.laakirun.veyloria.common.entity.HomingArrowEntity;
+import dev.laakirun.veyloria.common.entity.NpcEntity;
 import dev.laakirun.veyloria.common.registry.VeyloriaAttachments;
 import dev.laakirun.veyloria.common.registry.VeyloriaEntityTypes;
 import dev.laakirun.veyloria.common.targeting.PlayerTargetState;
@@ -23,6 +24,7 @@ import dev.laakirun.veyloria.server.VeyloriaServerRuntime;
 import dev.laakirun.veyloria.server.content.MobSpawnGroup;
 import dev.laakirun.veyloria.server.content.MobTemplate;
 import dev.laakirun.veyloria.server.db.SeedImporter;
+import dev.laakirun.veyloria.server.npc.NpcService;
 import dev.laakirun.veyloria.server.profile.ExperienceGainResult;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -44,6 +46,7 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.tags.DamageTypeTags;
 import net.minecraft.world.InteractionHand;
+import net.minecraft.world.InteractionResult;
 import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.damagesource.CombatRules;
 import net.minecraft.world.entity.Entity;
@@ -79,6 +82,7 @@ import net.neoforged.neoforge.event.entity.player.PlayerEvent;
 import net.neoforged.neoforge.event.entity.player.PlayerInteractEvent;
 import net.neoforged.neoforge.event.entity.player.PlayerXpEvent;
 import net.neoforged.neoforge.event.server.ServerStoppingEvent;
+import net.neoforged.neoforge.event.level.LevelEvent;
 import net.neoforged.neoforge.event.tick.ServerTickEvent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -250,6 +254,9 @@ public final class VeyloriaServerEvents {
         runtime.playerLoadoutService().initializePlayer(player);
         lastZoneByPlayer.remove(player.getUUID());
         syncPlayerHud(player, profile);
+        if (runtime.questService() != null) {
+            runtime.questService().syncPlayer(player);
+        }
     }
 
     @SubscribeEvent
@@ -275,6 +282,9 @@ public final class VeyloriaServerEvents {
     public void onPlayerRespawn(PlayerEvent.PlayerRespawnEvent event) {
         if (event.getEntity() instanceof ServerPlayer player) {
             VeyloriaServerRuntime.instance().playerLoadoutService().initializePlayer(player);
+            if (VeyloriaServerRuntime.instance().questService() != null) {
+                VeyloriaServerRuntime.instance().questService().syncPlayer(player);
+            }
         }
     }
 
@@ -300,6 +310,12 @@ public final class VeyloriaServerEvents {
         playerCombatUntilTickByPlayer.clear();
         lastZoneByPlayer.clear();
         locateAliasesRegistered = false;
+        if (runtime.npcService() != null) {
+            runtime.npcService().clear();
+        }
+        if (runtime.questService() != null) {
+            runtime.questService().clear();
+        }
         if (runtime.structureService() != null) {
             runtime.structureService().forceReload(null);
         }
@@ -312,6 +328,8 @@ public final class VeyloriaServerEvents {
         var authService = runtime.authService();
         var characterService = runtime.characterService();
         var mobSpawnService = runtime.mobSpawnService();
+        var npcService = runtime.npcService();
+        var questService = runtime.questService();
         var testWorldLayoutService = runtime.testWorldLayoutService();
         var gearDropService = runtime.gearDropService();
         var playerLoadoutService = runtime.playerLoadoutService();
@@ -320,6 +338,8 @@ public final class VeyloriaServerEvents {
             || authService == null
             || characterService == null
             || mobSpawnService == null
+            || npcService == null
+            || questService == null
             || testWorldLayoutService == null
             || gearDropService == null
             || playerLoadoutService == null
@@ -369,6 +389,22 @@ public final class VeyloriaServerEvents {
             mobSpawnService.tick(server);
             lastSpawnTick = gameTime;
         }
+        for (ServerLevel level : server.getAllLevels()) {
+            npcService.tick(level);
+            questService.tick(level);
+        }
+    }
+
+    @SubscribeEvent
+    public void onLevelLoad(LevelEvent.Load event) {
+        if (!(event.getLevel() instanceof ServerLevel level)) {
+            return;
+        }
+        NpcService npcService = VeyloriaServerRuntime.instance().npcService();
+        if (npcService == null) {
+            return;
+        }
+        npcService.ensureSpawnedOnLoad(level);
     }
 
     @SubscribeEvent
@@ -389,6 +425,15 @@ public final class VeyloriaServerEvents {
             if (shouldDiscardNonRpgDrop(event, drop)) {
                 event.setCanceled(true);
                 drop.discard();
+            }
+            return;
+        }
+        if (event.getEntity() instanceof NpcEntity npc) {
+            if (event.getLevel() instanceof ServerLevel level) {
+                NpcService npcService = VeyloriaServerRuntime.instance().npcService();
+                if (npcService != null) {
+                    npcService.onEntityJoin(level, npc);
+                }
             }
             return;
         }
@@ -448,6 +493,38 @@ public final class VeyloriaServerEvents {
     }
 
     @SubscribeEvent
+    public void onEntityInteract(PlayerInteractEvent.EntityInteract event) {
+        handleNpcInteract(event.getEntity(), event.getTarget(), event.getHand(), event);
+    }
+
+    @SubscribeEvent
+    public void onEntityInteractSpecific(PlayerInteractEvent.EntityInteractSpecific event) {
+        handleNpcInteract(event.getEntity(), event.getTarget(), event.getHand(), event);
+    }
+
+    private void handleNpcInteract(Player player, Entity target, InteractionHand hand, net.neoforged.bus.api.ICancellableEvent event) {
+        if (!(player instanceof ServerPlayer serverPlayer) || hand != InteractionHand.MAIN_HAND || !(target instanceof NpcEntity npc)) {
+            return;
+        }
+        if (serverPlayer.level().isClientSide()) {
+            return;
+        }
+        NpcService npcService = VeyloriaServerRuntime.instance().npcService();
+        if (npcService == null) {
+            return;
+        }
+        if (npcService.onInteract(serverPlayer, npc)) {
+            if (event instanceof PlayerInteractEvent.EntityInteract entityInteract) {
+                entityInteract.setCancellationResult(InteractionResult.SUCCESS);
+            }
+            if (event instanceof PlayerInteractEvent.EntityInteractSpecific specific) {
+                specific.setCancellationResult(InteractionResult.SUCCESS);
+            }
+            event.setCanceled(true);
+        }
+    }
+
+    @SubscribeEvent
     public void onBlockBreak(BlockEvent.BreakEvent event) {
         if (event.getPlayer() instanceof ServerPlayer player && !canModifyWorld(player)) {
             event.setCanceled(true);
@@ -464,6 +541,9 @@ public final class VeyloriaServerEvents {
     @SubscribeEvent
     public void onAttackEntity(AttackEntityEvent event) {
         if (!(event.getEntity() instanceof ServerPlayer player)) {
+            return;
+        }
+        if (event.getTarget() instanceof NpcEntity) {
             return;
         }
         event.setCanceled(true);
@@ -662,6 +742,7 @@ public final class VeyloriaServerEvents {
         VeyloriaServerRuntime runtime = VeyloriaServerRuntime.instance();
         MobSpawnService spawnService = runtime.mobSpawnService();
         CommonMobAiService commonMobAiService = runtime.commonMobAiService();
+        var questService = runtime.questService();
         Entity sourceEntity = event.getSource().getEntity();
         MobTemplate sourceTemplate = sourceEntity == null || spawnService == null ? null : spawnService.template(sourceEntity.getUUID());
         MobTemplate targetTemplate = spawnService == null ? null : spawnService.template(event.getEntity().getUUID());
@@ -738,6 +819,14 @@ public final class VeyloriaServerEvents {
                     COMBAT_LOGGER.debug("Incoming damage to {} from {}: {} -> {} -> {}",
                         player.getGameProfile().getName(), sourceEntity.getUUID(), original, mitigated, compensated);
                 }
+            }
+        }
+        if (!event.isCanceled() && questService != null) {
+            if (sourceEntity instanceof ServerPlayer sourcePlayer) {
+                questService.onPlayerDealtDamage(sourcePlayer, gameTime);
+            }
+            if (event.getEntity() instanceof ServerPlayer targetPlayer) {
+                questService.onPlayerTakenDamage(targetPlayer, gameTime);
             }
         }
     }
@@ -818,6 +907,27 @@ public final class VeyloriaServerEvents {
     public void onMobDeath(LivingDeathEvent event) {
         if (!(event.getEntity().level() instanceof ServerLevel level)) {
             return;
+        }
+        if (event.getEntity() instanceof NpcEntity npc) {
+            NpcService npcService = VeyloriaServerRuntime.instance().npcService();
+            if (npcService != null) {
+                npcService.onNpcDeath(npc);
+            }
+            return;
+        }
+        var questService = VeyloriaServerRuntime.instance().questService();
+        if (questService != null && event.getEntity() instanceof LivingEntity victim) {
+            ServerPlayer killer = null;
+            Entity source = event.getSource().getEntity();
+            if (source instanceof ServerPlayer player) {
+                killer = player;
+            } else if (event.getSource().getDirectEntity() instanceof net.minecraft.world.entity.projectile.Projectile projectile
+                && projectile.getOwner() instanceof ServerPlayer owner) {
+                killer = owner;
+            }
+            if (killer != null) {
+                questService.onMobKilledByPlayer(killer, victim, level.getGameTime());
+            }
         }
         MobInstance instance = VeyloriaServerRuntime.instance().mobSpawnService().remove(event.getEntity().getUUID());
         if (instance == null) {

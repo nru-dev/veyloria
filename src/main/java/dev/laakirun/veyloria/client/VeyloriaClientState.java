@@ -9,6 +9,9 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.nbt.ListTag;
+import net.minecraft.nbt.Tag;
 import net.minecraft.world.item.ItemStack;
 
 public final class VeyloriaClientState {
@@ -32,6 +35,8 @@ public final class VeyloriaClientState {
     private String lastError = "";
     private final List<Notification> notifications = new ArrayList<>();
     private final List<Notification> notificationsView = Collections.unmodifiableList(notifications);
+    private final List<QuestEntry> activeQuests = new ArrayList<>();
+    private final List<QuestEntry> activeQuestsView = Collections.unmodifiableList(activeQuests);
     private final Map<UUID, ResourceBars> barsByPlayer = new HashMap<>();
     private final ItemStack[] loadoutItems = new ItemStack[PlayerLoadoutData.SLOT_COUNT];
     private ZoneAnnouncement zoneAnnouncement;
@@ -61,6 +66,7 @@ public final class VeyloriaClientState {
         currentTargetExpiresAtTick = 0L;
         lastError = "";
         notifications.clear();
+        activeQuests.clear();
         barsByPlayer.clear();
         zoneAnnouncement = null;
         clearLoadout();
@@ -247,6 +253,33 @@ public final class VeyloriaClientState {
         return zoneAnnouncement;
     }
 
+    public void setQuestState(CompoundTag stateTag) {
+        activeQuests.clear();
+        if (stateTag == null) {
+            return;
+        }
+        ListTag list = stateTag.getList("active", Tag.TAG_COMPOUND);
+        for (int i = 0; i < list.size(); i++) {
+            CompoundTag entry = list.getCompound(i);
+            activeQuests.add(new QuestEntry(
+                entry.getString("questId"),
+                entry.getString("title"),
+                entry.getString("objective"),
+                entry.getString("progress"),
+                entry.getBoolean("readyToTurnIn"),
+                entry.getInt("level")
+            ));
+        }
+    }
+
+    public List<QuestEntry> activeQuests() {
+        return activeQuestsView;
+    }
+
+    public QuestEntry trackedQuest() {
+        return activeQuests.isEmpty() ? null : activeQuests.get(0);
+    }
+
     public void prune(long gameTick) {
         Iterator<Notification> iterator = notifications.iterator();
         while (iterator.hasNext()) {
@@ -285,5 +318,8 @@ public final class VeyloriaClientState {
         public static final int HOLD_TICKS = 56;
         public static final int FADE_OUT_TICKS = 28;
         public static final int TOTAL_DURATION_TICKS = FADE_IN_TICKS + HOLD_TICKS + FADE_OUT_TICKS;
+    }
+
+    public record QuestEntry(String questId, String title, String objective, String progress, boolean readyToTurnIn, int level) {
     }
 }

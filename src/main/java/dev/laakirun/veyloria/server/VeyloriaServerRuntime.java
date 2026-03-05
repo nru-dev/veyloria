@@ -19,6 +19,9 @@ import dev.laakirun.veyloria.server.game.PartyService;
 import dev.laakirun.veyloria.server.game.PlayerLoadoutService;
 import dev.laakirun.veyloria.server.game.PlayerStatService;
 import dev.laakirun.veyloria.server.game.TestWorldLayoutService;
+import dev.laakirun.veyloria.server.location.LocationService;
+import dev.laakirun.veyloria.server.npc.NpcService;
+import dev.laakirun.veyloria.server.quest.QuestService;
 import dev.laakirun.veyloria.server.profile.CharacterService;
 import dev.laakirun.veyloria.server.profile.LevelService;
 import dev.laakirun.veyloria.server.structure.StructureService;
@@ -49,6 +52,9 @@ public final class VeyloriaServerRuntime {
     private StructureService structureService;
     private TargetingService targetingService;
     private TargetingProfile targetingProfile;
+    private NpcService npcService;
+    private LocationService locationService;
+    private QuestService questService;
 
     private VeyloriaServerRuntime() {
     }
@@ -83,6 +89,11 @@ public final class VeyloriaServerRuntime {
         this.structureService = new StructureService(databaseManager);
         this.targetingService = new TargetingService();
         this.targetingProfile = TargetingProfile.defaults();
+        this.npcService = new NpcService();
+        this.npcService.registerDefinitions();
+        this.locationService = new LocationService();
+        this.questService = new QuestService(locationService);
+        this.questService.registerDefinitions();
     }
 
     public ServerConfig serverConfig() {
@@ -175,5 +186,17 @@ public final class VeyloriaServerRuntime {
 
     public TargetingProfile targetingProfile() {
         return targetingProfile;
+    }
+
+    public NpcService npcService() {
+        return npcService;
+    }
+
+    public LocationService locationService() {
+        return locationService;
+    }
+
+    public QuestService questService() {
+        return questService;
     }
 }
