@@ -4,6 +4,7 @@ import dev.laakirun.veyloria.common.item.PlayerLoadoutData;
 import dev.laakirun.veyloria.common.item.RpgItemData;
 import dev.laakirun.veyloria.common.model.BaseStats;
 import dev.laakirun.veyloria.common.model.CharacterProfile;
+import dev.laakirun.veyloria.common.model.EquipSlot;
 import dev.laakirun.veyloria.server.VeyloriaServerRuntime;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.world.entity.player.Player;
@@ -82,6 +83,11 @@ public final class PlayerStatService {
         if (data == null || !data.contains(RpgItemData.ROOT_KEY)) {
             return BaseStats.ZERO;
         }
-        return RpgItemData.fromTag(data.copyTag().getCompound(RpgItemData.ROOT_KEY)).rolledStats();
+        RpgItemData itemData = RpgItemData.fromTag(data.copyTag().getCompound(RpgItemData.ROOT_KEY));
+        BaseStats stats = itemData.rolledStats();
+        if (itemData.equipSlot() == EquipSlot.WEAPON && stats.armor() > 0) {
+            return new BaseStats(stats.power(), stats.vitality(), 0, stats.crit(), stats.haste());
+        }
+        return stats;
     }
 }

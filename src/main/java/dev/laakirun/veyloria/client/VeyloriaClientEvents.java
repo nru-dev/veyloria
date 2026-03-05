@@ -4,16 +4,15 @@ import com.mojang.blaze3d.platform.InputConstants;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexConsumer;
 import dev.laakirun.veyloria.common.VeyloriaConstants;
-import dev.laakirun.veyloria.common.item.PlayerLoadoutData;
 import dev.laakirun.veyloria.common.item.RpgItemData;
 import dev.laakirun.veyloria.common.model.BaseStats;
+import dev.laakirun.veyloria.common.model.EquipSlot;
 import dev.laakirun.veyloria.common.network.VeyloriaNetwork;
 import java.util.UUID;
 import net.minecraft.ChatFormatting;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
-import net.minecraft.client.gui.screens.inventory.InventoryScreen;
 import net.minecraft.client.renderer.LevelRenderer;
 import net.minecraft.client.renderer.MultiBufferSource;
 import net.minecraft.client.renderer.RenderType;
@@ -34,11 +33,9 @@ import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.neoforge.client.event.ClientChatReceivedEvent;
 import net.neoforged.neoforge.client.event.ClientPlayerNetworkEvent;
 import net.neoforged.neoforge.client.event.ClientTickEvent;
-import net.neoforged.neoforge.client.event.InputEvent;
 import net.neoforged.neoforge.client.event.RenderGuiLayerEvent;
 import net.neoforged.neoforge.client.event.RenderLevelStageEvent;
 import net.neoforged.neoforge.client.event.RenderNameTagEvent;
-import net.neoforged.neoforge.client.event.ScreenEvent;
 import net.neoforged.neoforge.client.gui.VanillaGuiLayers;
 import net.neoforged.neoforge.event.entity.player.ItemTooltipEvent;
 import org.lwjgl.glfw.GLFW;
@@ -84,7 +81,6 @@ public final class VeyloriaClientEvents {
         }
         syncMeleeAttackIntent(minecraft);
         syncAutoConsumableUse(minecraft);
-        minecraft.player.getInventory().selected = PlayerLoadoutData.ACTIVE_MIRROR_INVENTORY_SLOT;
         VeyloriaClientState.instance().prune(minecraft.player.tickCount);
     }
 
@@ -106,7 +102,9 @@ public final class VeyloriaClientEvents {
         }
         RpgItemData itemData = RpgItemData.fromTag(data.copyTag().getCompound(RpgItemData.ROOT_KEY));
         event.getToolTip().add(Component.literal("Редкость: " + rarityName(itemData)).withStyle(rarityColor(itemData)));
-        event.getToolTip().add(Component.literal("Требуемый уровень: " + itemData.requiredLevel()));
+        boolean levelEnough = VeyloriaClientState.instance().level() >= itemData.requiredLevel();
+        event.getToolTip().add(Component.literal("Требуемый уровень: " + itemData.requiredLevel())
+            .withStyle(levelEnough ? ChatFormatting.WHITE : ChatFormatting.RED));
         if (itemData.rolledStats().power() > 0) {
             event.getToolTip().add(Component.literal("Сила: +" + itemData.rolledStats().power()).withStyle(ChatFormatting.RED));
         }
@@ -119,8 +117,10 @@ public final class VeyloriaClientEvents {
         if (itemData.rolledStats().haste() > 0) {
             event.getToolTip().add(Component.literal("Интеллект: +" + itemData.rolledStats().haste()).withStyle(ChatFormatting.LIGHT_PURPLE));
         }
-        ChatFormatting armorColor = itemData.armorBoosted() ? ChatFormatting.GREEN : ChatFormatting.WHITE;
-        event.getToolTip().add(Component.literal("Броня: +" + itemData.rolledStats().armor()).withStyle(armorColor));
+        if (itemData.equipSlot() != EquipSlot.WEAPON) {
+            ChatFormatting armorColor = itemData.armorBoosted() ? ChatFormatting.GREEN : ChatFormatting.WHITE;
+            event.getToolTip().add(Component.literal("Броня: +" + itemData.rolledStats().armor()).withStyle(armorColor));
+        }
         if (!itemData.weaponType().isBlank()) {
             event.getToolTip().add(Component.literal("Тип оружия: " + weaponLabel(itemData.weaponType())));
             if (itemData.aoeChance() > 0.0D && itemData.aoeTargets() > 0) {
@@ -153,9 +153,7 @@ public final class VeyloriaClientEvents {
             || event.getName().equals(VanillaGuiLayers.EXPERIENCE_LEVEL)
             || event.getName().equals(VanillaGuiLayers.PLAYER_HEALTH)
             || event.getName().equals(VanillaGuiLayers.ARMOR_LEVEL)
-            || event.getName().equals(VanillaGuiLayers.FOOD_LEVEL)
-            || event.getName().equals(VanillaGuiLayers.HOTBAR)
-            || event.getName().equals(VanillaGuiLayers.SELECTED_ITEM_NAME)) {
+            || event.getName().equals(VanillaGuiLayers.FOOD_LEVEL)) {
             event.setCanceled(true);
         }
     }
@@ -207,8 +205,6 @@ public final class VeyloriaClientEvents {
             guiGraphics.drawCenteredString(minecraft.font, notification.text(), width / 2, notificationBaseY - index * 10, 0xFFFFFF);
             index++;
         }
-
-        drawLoadoutHud(minecraft, guiGraphics, width, height);
     }
 
     @SubscribeEvent
@@ -229,53 +225,6 @@ public final class VeyloriaClientEvents {
             return;
         }
         renderTargetOutline(event, minecraft, target);
-    }
-
-    @SubscribeEvent
-    public static void onInventoryOpening(ScreenEvent.Opening event) {
-        if (!(event.getNewScreen() instanceof InventoryScreen)) {
-            return;
-        }
-        Minecraft minecraft = Minecraft.getInstance();
-        if (minecraft.player == null || minecraft.getConnection() == null) {
-            return;
-        }
-        event.setCanceled(true);
-        minecraft.getConnection().send(new VeyloriaNetwork.OpenInventoryPayload());
-    }
-
-    @SubscribeEvent
-    public static void onMouseScroll(InputEvent.MouseScrollingEvent event) {
-        Minecraft minecraft = Minecraft.getInstance();
-        if (minecraft.player == null || minecraft.screen != null) {
-            return;
-        }
-        event.setCanceled(true);
-        minecraft.player.getInventory().selected = PlayerLoadoutData.ACTIVE_MIRROR_INVENTORY_SLOT;
-    }
-
-    @SubscribeEvent
-    public static void onKeyInput(InputEvent.Key event) {
-        if (event.getAction() != GLFW.GLFW_PRESS) {
-            return;
-        }
-        Minecraft minecraft = Minecraft.getInstance();
-        if (minecraft.player == null || minecraft.screen != null) {
-            return;
-        }
-
-        int weaponSlot = weaponSlotForKey(event.getKey());
-        if (weaponSlot >= 0) {
-            sendActionSlotSelection(weaponSlot);
-        } else {
-            int consumableSlot = consumableSlotForKey(event.getKey());
-            if (consumableSlot >= 0) {
-                useConsumableSlot(consumableSlot);
-            }
-        }
-        if (event.getKey() >= GLFW.GLFW_KEY_1 && event.getKey() <= GLFW.GLFW_KEY_9) {
-            minecraft.player.getInventory().selected = PlayerLoadoutData.ACTIVE_MIRROR_INVENTORY_SLOT;
-        }
     }
 
     @SubscribeEvent
@@ -442,99 +391,6 @@ public final class VeyloriaClientEvents {
         guiGraphics.fill(x, y, x + width, y + height, 0xB0000000);
         if (fill > 0) {
             guiGraphics.fill(x, y, x + fill, y + height, fillColor);
-        }
-    }
-
-    private static void drawLoadoutHud(Minecraft minecraft, GuiGraphics guiGraphics, int width, int height) {
-        VeyloriaClientState state = VeyloriaClientState.instance();
-        int quickX = width - 84;
-        int quickY = height - 96;
-        drawQuickSlot(guiGraphics, minecraft, quickX, quickY, PlayerLoadoutData.SLOT_CONSUMABLE_1, "4", state);
-        drawQuickSlot(guiGraphics, minecraft, quickX + 18, quickY, PlayerLoadoutData.SLOT_CONSUMABLE_2, "5", state);
-        drawQuickSlot(guiGraphics, minecraft, quickX + 36, quickY, PlayerLoadoutData.SLOT_CONSUMABLE_3, "6", state);
-        drawQuickSlot(guiGraphics, minecraft, quickX + 54, quickY, PlayerLoadoutData.SLOT_CONSUMABLE_4, "7", state);
-
-        int rowX = width - 122;
-        int rowY = height - 72;
-        drawActionRow(guiGraphics, minecraft, rowX, rowY, PlayerLoadoutData.SLOT_MAIN_WEAPON, "1", state);
-        drawActionRow(guiGraphics, minecraft, rowX, rowY + 20, PlayerLoadoutData.SLOT_SECONDARY_WEAPON, "2", state);
-        drawActionRow(guiGraphics, minecraft, rowX, rowY + 40, PlayerLoadoutData.SLOT_RANGED_WEAPON, "3", state);
-    }
-
-    private static void drawQuickSlot(GuiGraphics guiGraphics, Minecraft minecraft, int x, int y, int slot, String label,
-                                      VeyloriaClientState state) {
-        boolean active = state.activeLoadoutSlot() == slot;
-        int border = active ? 0xFFF0C55A : 0xFF617086;
-        int fill = active ? 0xA06E5412 : 0x90232B38;
-        guiGraphics.fill(x - 1, y - 1, x + 17, y + 17, border);
-        guiGraphics.fill(x, y, x + 16, y + 16, fill);
-
-        ItemStack stack = state.loadoutItem(slot);
-        if (!stack.isEmpty()) {
-            guiGraphics.renderItem(stack, x, y);
-            guiGraphics.renderItemDecorations(minecraft.font, stack, x, y);
-        }
-        guiGraphics.drawCenteredString(minecraft.font, label, x + 8, y + 19, active ? 0xF6D688 : 0xD9E2F1);
-    }
-
-    private static void drawActionRow(GuiGraphics guiGraphics, Minecraft minecraft, int x, int y, int slot, String label,
-                                      VeyloriaClientState state) {
-        boolean active = state.activeLoadoutSlot() == slot;
-        int border = active ? 0xFFF0C55A : 0xFF617086;
-        int fill = active ? 0xA06E5412 : 0x90232B38;
-        guiGraphics.fill(x - 1, y - 1, x + 111, y + 19, border);
-        guiGraphics.fill(x, y, x + 110, y + 18, fill);
-        guiGraphics.fill(x + 92, y, x + 110, y + 18, active ? 0xB0836518 : 0xA0343D4A);
-        guiGraphics.drawCenteredString(minecraft.font, label, x + 101, y + 5, active ? 0xFFF4C66B : 0xFFE0E7F3);
-
-        ItemStack stack = state.loadoutItem(slot);
-        if (stack.isEmpty()) {
-            return;
-        }
-        guiGraphics.renderItem(stack, x + 2, y + 1);
-        guiGraphics.renderItemDecorations(minecraft.font, stack, x + 2, y + 1);
-        String name = minecraft.font.plainSubstrByWidth(stack.getHoverName().getString(), 62);
-        guiGraphics.drawString(minecraft.font, name, x + 24, y + 5, 0xF3F5F7, false);
-    }
-
-    private static int weaponSlotForKey(int keyCode) {
-        return switch (keyCode) {
-            case GLFW.GLFW_KEY_1 -> PlayerLoadoutData.SLOT_MAIN_WEAPON;
-            case GLFW.GLFW_KEY_2 -> PlayerLoadoutData.SLOT_SECONDARY_WEAPON;
-            case GLFW.GLFW_KEY_3 -> PlayerLoadoutData.SLOT_RANGED_WEAPON;
-            default -> -1;
-        };
-    }
-
-    private static int consumableSlotForKey(int keyCode) {
-        return switch (keyCode) {
-            case GLFW.GLFW_KEY_4 -> PlayerLoadoutData.SLOT_CONSUMABLE_1;
-            case GLFW.GLFW_KEY_5 -> PlayerLoadoutData.SLOT_CONSUMABLE_2;
-            case GLFW.GLFW_KEY_6 -> PlayerLoadoutData.SLOT_CONSUMABLE_3;
-            case GLFW.GLFW_KEY_7 -> PlayerLoadoutData.SLOT_CONSUMABLE_4;
-            default -> -1;
-        };
-    }
-
-    private static void sendActionSlotSelection(int actionSlot) {
-        Minecraft minecraft = Minecraft.getInstance();
-        if (minecraft.getConnection() == null) {
-            return;
-        }
-        minecraft.getConnection().send(new VeyloriaNetwork.SelectActionSlotPayload(actionSlot));
-        if (minecraft.player != null) {
-            minecraft.player.getInventory().selected = PlayerLoadoutData.ACTIVE_MIRROR_INVENTORY_SLOT;
-        }
-    }
-
-    private static void useConsumableSlot(int consumableSlot) {
-        Minecraft minecraft = Minecraft.getInstance();
-        if (minecraft.getConnection() == null) {
-            return;
-        }
-        minecraft.getConnection().send(new VeyloriaNetwork.UseConsumablePayload(consumableSlot));
-        if (minecraft.player != null) {
-            minecraft.player.getInventory().selected = PlayerLoadoutData.ACTIVE_MIRROR_INVENTORY_SLOT;
         }
     }
 

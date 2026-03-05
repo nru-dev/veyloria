@@ -66,6 +66,7 @@ import net.neoforged.neoforge.event.RegisterCommandsEvent;
 import net.neoforged.neoforge.event.level.BlockEvent;
 import net.neoforged.neoforge.event.entity.living.LivingDeathEvent;
 import net.neoforged.neoforge.event.entity.living.LivingDropsEvent;
+import net.neoforged.neoforge.event.entity.living.LivingHealEvent;
 import net.neoforged.neoforge.event.entity.living.LivingIncomingDamageEvent;
 import net.neoforged.neoforge.event.entity.living.LivingKnockBackEvent;
 import net.neoforged.neoforge.event.entity.living.LivingEntityUseItemEvent;
@@ -98,6 +99,7 @@ public final class VeyloriaServerEvents {
     private static final int STARTER_ARROW_STACKS = 4;
     private static final int ARROWS_PER_STACK = 64;
     private static final long DAMAGE_TEXT_LIFETIME_TICKS = 20L;
+    private static final long PLAYER_COMBAT_TIMEOUT_TICKS = 20L * 12L;
     private static final double CRIT_BASE_CHANCE = 0.05D;
     private static final double CRIT_PER_AGILITY = 0.0035D;
     private static final double CRIT_MAX_CHANCE = 0.55D;
@@ -111,6 +113,8 @@ public final class VeyloriaServerEvents {
     private final java.util.Map<BarsPairKey, BarsCacheEntry> barCacheByViewerSubject = new ConcurrentHashMap<>();
     private final java.util.Map<UUID, TargetMarkerCacheEntry> targetMarkerByPlayer = new ConcurrentHashMap<>();
     private final java.util.Map<UUID, DamageTextState> damageTextById = new ConcurrentHashMap<>();
+    private final java.util.Map<UUID, Long> suppressKnockbackUntilTickByPlayer = new ConcurrentHashMap<>();
+    private final java.util.Map<UUID, Long> playerCombatUntilTickByPlayer = new ConcurrentHashMap<>();
 
     private long lastSpawnTick;
     private long lastProfileTick;
@@ -136,7 +140,7 @@ public final class VeyloriaServerEvents {
                     .then(Commands.literal("show")
                         .executes(context -> {
                             RatesConfig rates = VeyloriaServerRuntime.instance().ratesConfig();
-                            context.getSource().sendSuccess(() -> Component.literal("Р РµР№С‚С‹: xp=" + rates.xpRate()
+                            context.getSource().sendSuccess(() -> Component.literal("Рейты: xp=" + rates.xpRate()
                                 + ", currency=" + rates.currencyRate()
                                 + ", resource=" + rates.resourceDropRate()
                                 + ", equipment=" + rates.equipmentDropRate()
@@ -147,7 +151,7 @@ public final class VeyloriaServerEvents {
                     .then(Commands.literal("reset")
                         .executes(context -> {
                             VeyloriaServerRuntime.instance().resetRatesOverrides();
-                            context.getSource().sendSuccess(() -> Component.literal("Р РµР№С‚С‹ СЃР±СЂРѕС€РµРЅС‹ Рє Р·РЅР°С‡РµРЅРёСЏРј РёР· РєРѕРЅС„РёРіР°"), false);
+                            context.getSource().sendSuccess(() -> Component.literal("Рейты сброшены к значениям из конфига"), false);
                             return 1;
                         }))
                     .then(Commands.literal("set")
@@ -196,6 +200,8 @@ public final class VeyloriaServerEvents {
         lastSkillUseTick.remove(player.getUUID());
         manaByPlayer.remove(player.getUUID());
         targetMarkerByPlayer.remove(player.getUUID());
+        suppressKnockbackUntilTickByPlayer.remove(player.getUUID());
+        playerCombatUntilTickByPlayer.remove(player.getUUID());
         invalidateBarsCache(player.getUUID());
     }
 
@@ -208,10 +214,14 @@ public final class VeyloriaServerEvents {
 
     @SubscribeEvent
     public void onServerStopping(ServerStoppingEvent event) {
+        VeyloriaServerRuntime runtime = VeyloriaServerRuntime.instance();
+        var partyService = runtime.partyService();
+        var characterService = runtime.characterService();
+        var authService = runtime.authService();
         for (ServerPlayer player : event.getServer().getPlayerList().getPlayers()) {
-            VeyloriaServerRuntime.instance().partyService().removeMember(player.getUUID());
-            VeyloriaServerRuntime.instance().characterService().unload(player.getUUID());
-            VeyloriaServerRuntime.instance().authService().logout(player.getUUID());
+            partyService.removeMember(player.getUUID());
+            characterService.unload(player.getUUID());
+            authService.logout(player.getUUID());
         }
         lastPlayerAttackTick.clear();
         lastSkillUseTick.clear();
@@ -220,44 +230,57 @@ public final class VeyloriaServerEvents {
         barCacheByViewerSubject.clear();
         targetMarkerByPlayer.clear();
         damageTextById.clear();
+        suppressKnockbackUntilTickByPlayer.clear();
+        playerCombatUntilTickByPlayer.clear();
     }
 
     @SubscribeEvent
     public void onServerTick(ServerTickEvent.Post event) {
         VeyloriaServerRuntime runtime = VeyloriaServerRuntime.instance();
-        if (runtime.serverConfig() == null
-            || runtime.authService() == null
-            || runtime.characterService() == null
-            || runtime.mobSpawnService() == null
-            || runtime.testWorldLayoutService() == null
-            || runtime.gearDropService() == null
-            || runtime.playerLoadoutService() == null) {
+        var serverConfig = runtime.serverConfig();
+        var authService = runtime.authService();
+        var characterService = runtime.characterService();
+        var mobSpawnService = runtime.mobSpawnService();
+        var testWorldLayoutService = runtime.testWorldLayoutService();
+        var gearDropService = runtime.gearDropService();
+        var playerLoadoutService = runtime.playerLoadoutService();
+        if (serverConfig == null
+            || authService == null
+            || characterService == null
+            || mobSpawnService == null
+            || testWorldLayoutService == null
+            || gearDropService == null
+            || playerLoadoutService == null) {
             return;
         }
-        long gameTime = event.getServer().overworld().getGameTime();
+        MinecraftServer server = event.getServer();
+        long gameTime = server.overworld().getGameTime();
         boolean shouldSyncProfile = gameTime - lastProfileTick >= PROFILE_SYNC_INTERVAL_TICKS;
-        runtime.testWorldLayoutService().tick(event.getServer());
-        runtime.gearDropService().tick(event.getServer());
-        for (ServerPlayer player : event.getServer().getPlayerList().getPlayers()) {
+        testWorldLayoutService.tick(server);
+        gearDropService.tick(server);
+        List<ServerPlayer> players = server.getPlayerList().getPlayers();
+        for (ServerPlayer player : players) {
             disableHunger(player);
             enforceBuildMode(player);
             updateServerTargetState(player, gameTime);
-            CharacterProfile profile = runtime.characterService().loadedProfile(player.getUUID());
+            CharacterProfile profile = characterService.loadedProfile(player.getUUID());
             if (profile != null) {
-                runtime.playerLoadoutService().tick(player, profile.level());
-                if (shouldSyncProfile && isAuthenticated(player)) {
+                playerLoadoutService.tick(player, profile.level());
+                if (shouldSyncProfile && authService.sessionManager().isAuthenticated(player.getUUID())) {
                     syncPlayerHud(player, profile);
                 }
             }
         }
-        tickManaAndHealingPools(event.getServer(), gameTime);
-        tickDamageTexts(event.getServer(), gameTime);
+        tickManaAndHealingPools(server, gameTime);
+        tickDamageTexts(server, gameTime);
+        suppressKnockbackUntilTickByPlayer.entrySet().removeIf(entry -> entry.getValue() < gameTime);
+        playerCombatUntilTickByPlayer.entrySet().removeIf(entry -> entry.getValue() < gameTime);
         if (shouldSyncProfile) {
-            broadcastPlayerBars(event.getServer(), gameTime);
+            broadcastPlayerBars(server, gameTime);
             lastProfileTick = gameTime;
         }
-        if (gameTime - lastSpawnTick >= runtime.serverConfig().spawnTickInterval()) {
-            runtime.mobSpawnService().tick(event.getServer());
+        if (gameTime - lastSpawnTick >= serverConfig.spawnTickInterval()) {
+            mobSpawnService.tick(server);
             lastSpawnTick = gameTime;
         }
     }
@@ -559,8 +582,7 @@ public final class VeyloriaServerEvents {
         }
 
         if (sourceTemplate != null && targetTemplate != null
-            && sourceTemplate.hostilityType() == HostilityType.HOSTILE
-            && targetTemplate.hostilityType() == HostilityType.HOSTILE) {
+            && !isManagedMobCombatAllowed(sourceTemplate.hostilityType(), targetTemplate.hostilityType())) {
             event.setCanceled(true);
             return;
         }
@@ -568,13 +590,14 @@ public final class VeyloriaServerEvents {
         if (sourceEntity instanceof ServerPlayer playerSource && event.getEntity() instanceof LivingEntity target) {
             targetTemplate = VeyloriaServerRuntime.instance().mobSpawnService().template(target.getUUID());
             if (targetTemplate != null) {
+                long gameTime = target.level().getGameTime();
+                markPlayerInCombat(playerSource.getUUID(), gameTime);
                 if (targetTemplate.hostilityType() == HostilityType.FRIENDLY) {
                     event.setCanceled(true);
-                    ServerMarkers.sendError(playerSource, "Р”СЂСѓР¶РµР»СЋР±РЅС‹С… СЃСѓС‰РµСЃС‚РІ Р°С‚Р°РєРѕРІР°С‚СЊ РЅРµР»СЊР·СЏ");
+                    ServerMarkers.sendError(playerSource, "Дружелюбных существ атаковать нельзя");
                     return;
                 }
                 if (targetTemplate.hostilityType() == HostilityType.NEUTRAL) {
-                    long gameTime = target.level().getGameTime();
                     VeyloriaServerRuntime.instance().mobSpawnService().markNeutralAggro(target.getUUID(), playerSource.getUUID(), gameTime);
                     if (target instanceof Mob mob) {
                         mob.setTarget(playerSource);
@@ -585,21 +608,38 @@ public final class VeyloriaServerEvents {
 
         if (event.getEntity() instanceof ServerPlayer player) {
             if (sourceEntity != null && sourceTemplate != null) {
+                long gameTime = player.level().getGameTime();
+                markPlayerInCombat(player.getUUID(), gameTime);
                 if (sourceTemplate.hostilityType() == HostilityType.FRIENDLY) {
                     event.setCanceled(true);
                     return;
                 }
                 if (sourceTemplate.hostilityType() == HostilityType.NEUTRAL
-                    && !VeyloriaServerRuntime.instance().mobSpawnService().canNeutralDamage(sourceEntity.getUUID(), player.getUUID(), player.level().getGameTime())) {
-                    event.setCanceled(true);
-                    return;
+                    && sourceEntity != null) {
+                    boolean canNeutralDamage = VeyloriaServerRuntime.instance().mobSpawnService()
+                        .canNeutralDamage(sourceEntity.getUUID(), player.getUUID(), gameTime);
+                    if (!canNeutralDamage && sourceEntity instanceof Mob neutralMob && neutralMob.getTarget() != null
+                        && neutralMob.getTarget().getUUID().equals(player.getUUID())) {
+                        VeyloriaServerRuntime.instance().mobSpawnService().markNeutralAggro(sourceEntity.getUUID(), player.getUUID(), gameTime);
+                        canNeutralDamage = true;
+                    }
+                    if (!canNeutralDamage) {
+                        event.setCanceled(true);
+                        return;
+                    }
                 }
+                suppressKnockbackUntilTickByPlayer.put(player.getUUID(), player.level().getGameTime() + 4L);
+                Vec3 velocity = player.getDeltaMovement();
+                player.setDeltaMovement(0.0D, velocity.y, 0.0D);
                 CharacterProfile profile = VeyloriaServerRuntime.instance().characterService().loadedProfile(player.getUUID());
                 if (profile != null) {
                     float original = event.getAmount();
                     int attackerLevel = sourceTemplate == null ? profile.level() : sourceTemplate.level();
                     double mitigated = VeyloriaServerRuntime.instance().playerStatService()
                         .mitigateIncomingDamage(player, profile, original, attackerLevel);
+                    if (sourceTemplate != null) {
+                        mitigated *= sourceTemplate.hostilityType() == HostilityType.HOSTILE ? 1.55D : 1.30D;
+                    }
                     float compensated = compensateVanillaArmorReduction(player, event.getSource(), (float) mitigated);
                     event.setAmount(compensated);
                     COMBAT_LOGGER.debug("Incoming damage to {} from {}: {} -> {} -> {}",
@@ -614,18 +654,43 @@ public final class VeyloriaServerEvents {
         if (!(event.getEntity() instanceof ServerPlayer player)) {
             return;
         }
+        long gameTime = player.level().getGameTime();
+        Long untilTick = suppressKnockbackUntilTickByPlayer.get(player.getUUID());
+        if (untilTick != null && untilTick >= gameTime) {
+            event.setStrength(0.0F);
+            event.setRatioX(0.0D);
+            event.setRatioZ(0.0D);
+            return;
+        }
         DamageSource recentSource = player.getLastDamageSource();
         Entity attacker = recentSource == null ? null : recentSource.getEntity();
         if (attacker == null) {
             return;
         }
         MobTemplate sourceTemplate = VeyloriaServerRuntime.instance().mobSpawnService().template(attacker.getUUID());
-        if (sourceTemplate == null || sourceTemplate.hostilityType() != HostilityType.HOSTILE) {
+        if (sourceTemplate == null || sourceTemplate.hostilityType() == HostilityType.FRIENDLY) {
             return;
         }
         event.setStrength(0.0F);
         event.setRatioX(0.0D);
         event.setRatioZ(0.0D);
+    }
+
+    @SubscribeEvent
+    public void onLivingHeal(LivingHealEvent event) {
+        if (!(event.getEntity() instanceof ServerPlayer player)) {
+            return;
+        }
+        long gameTime = player.level().getGameTime();
+        if (!isPlayerInCombat(player.getUUID(), gameTime)) {
+            return;
+        }
+        event.setCanceled(true);
+    }
+
+    private static boolean isManagedMobCombatAllowed(HostilityType source, HostilityType target) {
+        return (source == HostilityType.FRIENDLY && target == HostilityType.HOSTILE)
+            || (source == HostilityType.HOSTILE && target == HostilityType.FRIENDLY);
     }
 
     @SubscribeEvent
@@ -692,10 +757,10 @@ public final class VeyloriaServerEvents {
                 * VeyloriaServerRuntime.instance().ratesConfig().currencyRate());
             profile.addCurrency(copper);
             ServerMarkers.sendGain(player, xp, copper);
-            player.sendSystemMessage(Component.literal("РћРїС‹С‚ СЃ РјРѕР±Р°: +" + xp));
+            player.sendSystemMessage(Component.literal("Опыт с моба: +" + xp));
             syncPlayerHud(player, profile);
             if (gainResult.leveledUp()) {
-                player.sendSystemMessage(Component.literal("РќРѕРІС‹Р№ СѓСЂРѕРІРµРЅСЊ: " + gainResult.previousLevel() + " -> " + gainResult.newLevel()));
+                player.sendSystemMessage(Component.literal("Новый уровень: " + gainResult.previousLevel() + " -> " + gainResult.newLevel()));
             }
             VeyloriaServerRuntime.instance().characterService().save(profile);
             COMBAT_LOGGER.debug("Rewards for {} from mob {}: +{} xp, +{} copper", player.getGameProfile().getName(),
@@ -878,11 +943,11 @@ public final class VeyloriaServerEvents {
             default -> null;
         };
         if (updated == null) {
-            source.sendFailure(Component.literal("РќРµРёР·РІРµСЃС‚РЅС‹Р№ С‚РёРї СЂРµР№С‚Р°. РСЃРїРѕР»СЊР·СѓР№С‚Рµ: xp|currency|resource|equipment|consumable|boss_respawn"));
+            source.sendFailure(Component.literal("Неизвестный тип рейта. Используйте: xp|currency|resource|equipment|consumable|boss_respawn"));
             return 0;
         }
         VeyloriaServerRuntime.instance().overrideRates(updated);
-        source.sendSuccess(() -> Component.literal("Р РµР№С‚ " + rateType + " СѓСЃС‚Р°РЅРѕРІР»РµРЅ РІ " + value + " (С‚РѕР»СЊРєРѕ РґРѕ СЂРµСЃС‚Р°СЂС‚Р°)"), false);
+        source.sendSuccess(() -> Component.literal("Рейт " + rateType + " установлен в " + value + " (только до рестарта)"), false);
         return 1;
     }
 
@@ -914,12 +979,12 @@ public final class VeyloriaServerEvents {
     }
 
     private int partyHelp(ServerPlayer player) {
-        player.sendSystemMessage(Component.literal("РљРѕРјР°РЅРґС‹ РіСЂСѓРїРїС‹:"));
-        player.sendSystemMessage(Component.literal("/party <nickname> РёР»Рё /p <nickname> вЂ” РґРѕР±Р°РІРёС‚СЊ РёРіСЂРѕРєР° РІ РіСЂСѓРїРїСѓ"));
-        player.sendSystemMessage(Component.literal("/party add <nickname> РёР»Рё /p add <nickname> вЂ” РґРѕР±Р°РІРёС‚СЊ РёРіСЂРѕРєР° (С‚РѕР»СЊРєРѕ Р»РёРґРµСЂ)"));
-        player.sendSystemMessage(Component.literal("/party kick <nickname> РёР»Рё /p kick <nickname> вЂ” РёСЃРєР»СЋС‡РёС‚СЊ РёРіСЂРѕРєР° (С‚РѕР»СЊРєРѕ Р»РёРґРµСЂ)"));
-        player.sendSystemMessage(Component.literal("/party leave РёР»Рё /p leave вЂ” РІС‹Р№С‚Рё РёР· РіСЂСѓРїРїС‹"));
-        player.sendSystemMessage(Component.literal("/party help РёР»Рё /p help вЂ” РїРѕРєР°Р·Р°С‚СЊ СЌС‚Сѓ СЃРїСЂР°РІРєСѓ"));
+        player.sendSystemMessage(Component.literal("Команды группы:"));
+        player.sendSystemMessage(Component.literal("/party <nickname> или /p <nickname> - добавить игрока в группу"));
+        player.sendSystemMessage(Component.literal("/party add <nickname> или /p add <nickname> - добавить игрока (только лидер)"));
+        player.sendSystemMessage(Component.literal("/party kick <nickname> или /p kick <nickname> - исключить игрока (только лидер)"));
+        player.sendSystemMessage(Component.literal("/party leave или /p leave - выйти из группы"));
+        player.sendSystemMessage(Component.literal("/party help или /p help - показать эту справку"));
         return 1;
     }
 
@@ -929,41 +994,41 @@ public final class VeyloriaServerEvents {
         }
         if (requireExistingParty && !VeyloriaServerRuntime.instance().partyService().isLeader(requester.getUUID())) {
             if (VeyloriaServerRuntime.instance().partyService().leaderOf(requester.getUUID()) == null) {
-                requester.sendSystemMessage(Component.literal("Р’С‹ РЅРµ СЃРѕСЃС‚РѕРёС‚Рµ РІ РіСЂСѓРїРїРµ. РЎРЅР°С‡Р°Р»Р° СЃРѕР·РґР°Р№С‚Рµ РіСЂСѓРїРїСѓ С‡РµСЂРµР· /party <nickname>"));
+                requester.sendSystemMessage(Component.literal("Вы не состоите в группе. Сначала создайте группу через /party <nickname>"));
             } else {
-                requester.sendSystemMessage(Component.literal("РўРѕР»СЊРєРѕ Р»РёРґРµСЂ РіСЂСѓРїРїС‹ РјРѕР¶РµС‚ РґРѕР±Р°РІР»СЏС‚СЊ РёРіСЂРѕРєРѕРІ"));
+                requester.sendSystemMessage(Component.literal("Только лидер группы может добавлять игроков"));
             }
             return 0;
         }
         ServerPlayer target = requester.getServer().getPlayerList().getPlayerByName(nickname);
         if (target == null) {
-            requester.sendSystemMessage(Component.literal("РРіСЂРѕРє РЅРµ РЅР°Р№РґРµРЅ РІ РѕРЅР»Р°Р№РЅРµ"));
+            requester.sendSystemMessage(Component.literal("Игрок не найден в онлайне"));
             return 0;
         }
         if (!isAuthenticated(target)) {
-            requester.sendSystemMessage(Component.literal("РРіСЂРѕРє РЅРµ Р°РІС‚РѕСЂРёР·РѕРІР°РЅ"));
+            requester.sendSystemMessage(Component.literal("Игрок не авторизован"));
             return 0;
         }
         PartyService.PartyUpdateResult result = VeyloriaServerRuntime.instance().partyService().addMember(requester.getUUID(), target.getUUID());
         switch (result.status()) {
             case CREATED -> {
-                requester.sendSystemMessage(Component.literal("РЎРѕР·РґР°РЅР° РіСЂСѓРїРїР°. Р’С‹ Р»РёРґРµСЂ. РЈС‡Р°СЃС‚РЅРёРєРѕРІ: " + result.memberCount()));
-                target.sendSystemMessage(Component.literal("Р’С‹ РІСЃС‚СѓРїРёР»Рё РІ РіСЂСѓРїРїСѓ. Р›РёРґРµСЂ: " + requester.getGameProfile().getName()));
+                requester.sendSystemMessage(Component.literal("Создана группа. Вы лидер. Участников: " + result.memberCount()));
+                target.sendSystemMessage(Component.literal("Вы вступили в группу. Лидер: " + requester.getGameProfile().getName()));
                 return 1;
             }
             case ADDED -> {
-                requester.sendSystemMessage(Component.literal("РРіСЂРѕРє " + target.getGameProfile().getName()
-                    + " РґРѕР±Р°РІР»РµРЅ РІ РіСЂСѓРїРїСѓ. РЈС‡Р°СЃС‚РЅРёРєРѕРІ: " + result.memberCount() + "/" + PartyService.MAX_MEMBERS));
-                target.sendSystemMessage(Component.literal("Р’С‹ РґРѕР±Р°РІР»РµРЅС‹ РІ РіСЂСѓРїРїСѓ РёРіСЂРѕРєРѕРј " + requester.getGameProfile().getName()));
+                requester.sendSystemMessage(Component.literal("Игрок " + target.getGameProfile().getName()
+                    + " добавлен в группу. Участников: " + result.memberCount() + "/" + PartyService.MAX_MEMBERS));
+                target.sendSystemMessage(Component.literal("Вы добавлены в группу игроком " + requester.getGameProfile().getName()));
                 return 1;
             }
-            case NOT_IN_PARTY -> requester.sendSystemMessage(Component.literal("РЎРЅР°С‡Р°Р»Р° СЃРѕР·РґР°Р№С‚Рµ РіСЂСѓРїРїСѓ С‡РµСЂРµР· /party <nickname>"));
-            case NOT_LEADER -> requester.sendSystemMessage(Component.literal("РўРѕР»СЊРєРѕ Р»РёРґРµСЂ РіСЂСѓРїРїС‹ РјРѕР¶РµС‚ РґРѕР±Р°РІР»СЏС‚СЊ РёРіСЂРѕРєРѕРІ"));
-            case PARTY_FULL -> requester.sendSystemMessage(Component.literal("Р’ РіСЂСѓРїРїРµ СѓР¶Рµ РјР°РєСЃРёРјСѓРј " + PartyService.MAX_MEMBERS + " РёРіСЂРѕРєРѕРІ"));
-            case TARGET_IN_OTHER_PARTY -> requester.sendSystemMessage(Component.literal("РРіСЂРѕРє СѓР¶Рµ СЃРѕСЃС‚РѕРёС‚ РІ РґСЂСѓРіРѕР№ РіСЂСѓРїРїРµ"));
-            case TARGET_ALREADY_IN_PARTY -> requester.sendSystemMessage(Component.literal("РРіСЂРѕРє СѓР¶Рµ РІ РІР°С€РµР№ РіСЂСѓРїРїРµ"));
-            case SELF_TARGET -> requester.sendSystemMessage(Component.literal("РќРµР»СЊР·СЏ РґРѕР±Р°РІРёС‚СЊ СЃР°РјРѕРіРѕ СЃРµР±СЏ"));
-            default -> requester.sendSystemMessage(Component.literal("РќРµ СѓРґР°Р»РѕСЃСЊ РґРѕР±Р°РІРёС‚СЊ РёРіСЂРѕРєР° РІ РіСЂСѓРїРїСѓ"));
+            case NOT_IN_PARTY -> requester.sendSystemMessage(Component.literal("Сначала создайте группу через /party <nickname>"));
+            case NOT_LEADER -> requester.sendSystemMessage(Component.literal("Только лидер группы может добавлять игроков"));
+            case PARTY_FULL -> requester.sendSystemMessage(Component.literal("В группе уже максимум " + PartyService.MAX_MEMBERS + " игроков"));
+            case TARGET_IN_OTHER_PARTY -> requester.sendSystemMessage(Component.literal("Игрок уже состоит в другой группе"));
+            case TARGET_ALREADY_IN_PARTY -> requester.sendSystemMessage(Component.literal("Игрок уже в вашей группе"));
+            case SELF_TARGET -> requester.sendSystemMessage(Component.literal("Нельзя добавить самого себя"));
+            default -> requester.sendSystemMessage(Component.literal("Не удалось добавить игрока в группу"));
         }
         return 0;
     }
@@ -977,13 +1042,13 @@ public final class VeyloriaServerEvents {
         UUID leaderBeforeLeave = VeyloriaServerRuntime.instance().partyService().leaderOf(requesterUuid);
         PartyService.PartyUpdateResult result = VeyloriaServerRuntime.instance().partyService().leave(requesterUuid);
         if (result.status() == PartyService.Status.NOT_IN_PARTY) {
-            requester.sendSystemMessage(Component.literal("Р’С‹ РЅРµ СЃРѕСЃС‚РѕРёС‚Рµ РІ РіСЂСѓРїРїРµ"));
+            requester.sendSystemMessage(Component.literal("Вы не состоите в группе"));
             return 0;
         }
 
         requester.sendSystemMessage(Component.literal(result.partyId() == null
-            ? "Р’С‹ РІС‹С€Р»Рё РёР· РіСЂСѓРїРїС‹"
-            : "Р’С‹ РІС‹С€Р»Рё РёР· РіСЂСѓРїРїС‹. РћСЃС‚Р°Р»РѕСЃСЊ СѓС‡Р°СЃС‚РЅРёРєРѕРІ: " + result.memberCount()));
+            ? "Вы вышли из группы"
+            : "Вы вышли из группы. Осталось участников: " + result.memberCount()));
 
         for (UUID memberUuid : membersBeforeLeave) {
             if (memberUuid.equals(requesterUuid)) {
@@ -991,14 +1056,14 @@ public final class VeyloriaServerEvents {
             }
             ServerPlayer member = requester.getServer().getPlayerList().getPlayer(memberUuid);
             if (member != null) {
-                member.sendSystemMessage(Component.literal(requester.getGameProfile().getName() + " РІС‹С€РµР» РёР· РіСЂСѓРїРїС‹"));
+                member.sendSystemMessage(Component.literal(requester.getGameProfile().getName() + " вышел из группы"));
             }
         }
         if (leaderBeforeLeave != null && leaderBeforeLeave.equals(requesterUuid)
             && result.partyId() != null && result.leaderUuid() != null) {
             ServerPlayer newLeader = requester.getServer().getPlayerList().getPlayer(result.leaderUuid());
             if (newLeader != null) {
-                newLeader.sendSystemMessage(Component.literal("Р’С‹ РЅР°Р·РЅР°С‡РµРЅС‹ Р»РёРґРµСЂРѕРј РіСЂСѓРїРїС‹"));
+                newLeader.sendSystemMessage(Component.literal("Вы назначены лидером группы"));
             }
         }
         return 1;
@@ -1010,22 +1075,22 @@ public final class VeyloriaServerEvents {
         }
         ServerPlayer target = requester.getServer().getPlayerList().getPlayerByName(nickname);
         if (target == null) {
-            requester.sendSystemMessage(Component.literal("РРіСЂРѕРє РЅРµ РЅР°Р№РґРµРЅ РІ РѕРЅР»Р°Р№РЅРµ"));
+            requester.sendSystemMessage(Component.literal("Игрок не найден в онлайне"));
             return 0;
         }
         PartyService.PartyUpdateResult result = VeyloriaServerRuntime.instance().partyService().kick(requester.getUUID(), target.getUUID());
         switch (result.status()) {
             case KICKED -> {
-                requester.sendSystemMessage(Component.literal("РРіСЂРѕРє " + target.getGameProfile().getName()
-                    + " РёСЃРєР»СЋС‡С‘РЅ РёР· РіСЂСѓРїРїС‹. РЈС‡Р°СЃС‚РЅРёРєРѕРІ: " + result.memberCount() + "/" + PartyService.MAX_MEMBERS));
-                target.sendSystemMessage(Component.literal("Р’С‹ РёСЃРєР»СЋС‡РµРЅС‹ РёР· РіСЂСѓРїРїС‹ РёРіСЂРѕРєРѕРј " + requester.getGameProfile().getName()));
+                requester.sendSystemMessage(Component.literal("Игрок " + target.getGameProfile().getName()
+                    + " исключён из группы. Участников: " + result.memberCount() + "/" + PartyService.MAX_MEMBERS));
+                target.sendSystemMessage(Component.literal("Вы исключены из группы игроком " + requester.getGameProfile().getName()));
                 return 1;
             }
-            case NOT_IN_PARTY -> requester.sendSystemMessage(Component.literal("Р’С‹ РЅРµ СЃРѕСЃС‚РѕРёС‚Рµ РІ РіСЂСѓРїРїРµ"));
-            case NOT_LEADER -> requester.sendSystemMessage(Component.literal("РўРѕР»СЊРєРѕ Р»РёРґРµСЂ РіСЂСѓРїРїС‹ РјРѕР¶РµС‚ РёСЃРєР»СЋС‡Р°С‚СЊ РёРіСЂРѕРєРѕРІ"));
-            case TARGET_NOT_IN_PARTY -> requester.sendSystemMessage(Component.literal("РРіСЂРѕРє РЅРµ СЃРѕСЃС‚РѕРёС‚ РІ РІР°С€РµР№ РіСЂСѓРїРїРµ"));
-            case CANNOT_KICK_SELF -> requester.sendSystemMessage(Component.literal("Р”Р»СЏ РІС‹С…РѕРґР° РёР· РіСЂСѓРїРїС‹ РёСЃРїРѕР»СЊР·СѓР№С‚Рµ /party leave"));
-            default -> requester.sendSystemMessage(Component.literal("РќРµ СѓРґР°Р»РѕСЃСЊ РёСЃРєР»СЋС‡РёС‚СЊ РёРіСЂРѕРєР° РёР· РіСЂСѓРїРїС‹"));
+            case NOT_IN_PARTY -> requester.sendSystemMessage(Component.literal("Вы не состоите в группе"));
+            case NOT_LEADER -> requester.sendSystemMessage(Component.literal("Только лидер группы может исключать игроков"));
+            case TARGET_NOT_IN_PARTY -> requester.sendSystemMessage(Component.literal("Игрок не состоит в вашей группе"));
+            case CANNOT_KICK_SELF -> requester.sendSystemMessage(Component.literal("Для выхода из группы используйте /party leave"));
+            default -> requester.sendSystemMessage(Component.literal("Не удалось исключить игрока из группы"));
         }
         return 0;
     }
@@ -1347,7 +1412,7 @@ public final class VeyloriaServerEvents {
             return;
         }
         double baseX = target.getX() + ThreadLocalRandom.current().nextDouble(-0.30D, 0.30D);
-        double baseY = target.getY() + target.getBbHeight() + 0.45D;
+        double baseY = target.getY() + Math.min(1.35D, target.getBbHeight() * 0.65D) + 0.16D;
         double baseZ = target.getZ() + ThreadLocalRandom.current().nextDouble(-0.30D, 0.30D);
         ArmorStand marker = new ArmorStand(level, baseX, baseY, baseZ);
         marker.setSilent(true);
@@ -1357,14 +1422,14 @@ public final class VeyloriaServerEvents {
         marker.setNoBasePlate(true);
         marker.setCustomNameVisible(true);
         int roundedDamage = Math.max(1, (int) Math.round(damage));
-        String text = critical ? "вњ¦ " + roundedDamage : Integer.toString(roundedDamage);
+        String text = critical ? "✦ " + roundedDamage : Integer.toString(roundedDamage);
         marker.setCustomName(Component.literal(text).withStyle(critical ? ChatFormatting.GOLD : ChatFormatting.WHITE));
         if (!level.addFreshEntity(marker)) {
             return;
         }
         Vec3 velocity = new Vec3(
             ThreadLocalRandom.current().nextDouble(-0.012D, 0.012D),
-            critical ? 0.080D : 0.062D,
+            critical ? 0.058D : 0.046D,
             ThreadLocalRandom.current().nextDouble(-0.012D, 0.012D)
         );
         damageTextById.put(marker.getUUID(), new DamageTextState(
@@ -1375,7 +1440,7 @@ public final class VeyloriaServerEvents {
     }
 
     private void tickDamageTexts(MinecraftServer server, long gameTime) {
-        for (Map.Entry<UUID, DamageTextState> entry : new java.util.ArrayList<>(damageTextById.entrySet())) {
+        for (Map.Entry<UUID, DamageTextState> entry : damageTextById.entrySet()) {
             DamageTextState state = entry.getValue();
             ServerLevel level = findLevel(server, state.dimension());
             if (level == null || gameTime >= state.expiresAtTick()) {
@@ -1391,7 +1456,7 @@ public final class VeyloriaServerEvents {
             Vec3 nextPos = marker.position().add(velocity);
             marker.teleportTo(nextPos.x, nextPos.y, nextPos.z);
             Vec3 damped = new Vec3(velocity.x * 0.86D, Math.max(0.018D, velocity.y * 0.88D), velocity.z * 0.86D);
-            damageTextById.put(entry.getKey(), state.withVelocity(damped));
+            damageTextById.replace(entry.getKey(), state, state.withVelocity(damped));
         }
     }
 
@@ -1473,7 +1538,7 @@ public final class VeyloriaServerEvents {
 
     private ItemStack createBestTestSword() {
         ItemStack stack = new ItemStack(Items.NETHERITE_SWORD);
-        BaseStats stats = new BaseStats(230, 165, 60, 90, 0);
+        BaseStats stats = new BaseStats(230, 165, 0, 90, 0);
         RpgItemData data = new RpgItemData(
             "test_best_sword",
             ItemCategory.EQUIPMENT,
@@ -1492,7 +1557,7 @@ public final class VeyloriaServerEvents {
             true,
             false,
             80,
-            "РљР»РёРЅРѕРє РЎРµРІРµСЂРЅРѕРіРѕ Р—Р°РІРµС‚Р°"
+            "Клинок Северного Завета"
         );
         CompoundTag root = new CompoundTag();
         root.put(RpgItemData.ROOT_KEY, data.toTag());
@@ -1503,7 +1568,7 @@ public final class VeyloriaServerEvents {
 
     private ItemStack createBestTestBow() {
         ItemStack stack = new ItemStack(Items.BOW);
-        BaseStats stats = new BaseStats(180, 120, 40, 260, 20);
+        BaseStats stats = new BaseStats(180, 120, 0, 260, 20);
         RpgItemData data = new RpgItemData(
             "test_best_bow",
             ItemCategory.EQUIPMENT,
@@ -1564,11 +1629,18 @@ public final class VeyloriaServerEvents {
         if (homingChance <= 0.0D || ThreadLocalRandom.current().nextDouble() > homingChance) {
             return null;
         }
-        return level.getEntitiesOfClass(Mob.class, player.getBoundingBox().inflate(20.0D),
-                mob -> mob.isAlive() && isAttackableByPlayers(mob))
-            .stream()
-            .min(java.util.Comparator.comparingDouble(player::distanceToSqr))
-            .orElse(null);
+        Mob fallback = null;
+        double bestDistanceSqr = 20.0D * 20.0D;
+        for (Mob mob : level.getEntitiesOfClass(Mob.class, player.getBoundingBox().inflate(20.0D),
+            candidate -> candidate.isAlive() && isAttackableByPlayers(candidate))) {
+            double distanceSqr = player.distanceToSqr(mob);
+            if (distanceSqr > bestDistanceSqr) {
+                continue;
+            }
+            bestDistanceSqr = distanceSqr;
+            fallback = mob;
+        }
+        return fallback;
     }
 
     private ServerPlayer findFriendlyTarget(ServerPlayer player) {
@@ -1645,7 +1717,7 @@ public final class VeyloriaServerEvents {
                 manaByPlayer.merge(player.getUUID(), maxMana, (oldValue, ignored) -> Math.min(maxMana, oldValue + regen));
             }
         }
-        for (Map.Entry<UUID, HealingPool> entry : new java.util.ArrayList<>(activeHealingPools.entrySet())) {
+        for (Map.Entry<UUID, HealingPool> entry : activeHealingPools.entrySet()) {
             HealingPool pool = entry.getValue();
             ServerLevel level = findLevel(server, pool.dimension());
             if (level == null || gameTime >= pool.expiresAtTick()) {
@@ -1679,7 +1751,7 @@ public final class VeyloriaServerEvents {
                 level.sendParticles(ParticleTypes.END_ROD, pool.center().x, pool.center().y + 0.15D, pool.center().z,
                     10, spread * 0.7D, 0.08D, spread * 0.7D, 0.02D);
             }
-            activeHealingPools.put(entry.getKey(), pool.withNextTick(gameTime + 20L));
+            activeHealingPools.replace(entry.getKey(), pool, pool.withNextTick(gameTime + 20L));
         }
     }
 
@@ -1691,7 +1763,7 @@ public final class VeyloriaServerEvents {
         double maxMana = maxMana(profile.level(), stats);
         double current = manaByPlayer.getOrDefault(player.getUUID(), maxMana);
         if (current < manaCost) {
-            ServerMarkers.sendError(player, "РќРµРґРѕСЃС‚Р°С‚РѕС‡РЅРѕ РјР°РЅС‹");
+            ServerMarkers.sendError(player, "Недостаточно маны");
             return false;
         }
         manaByPlayer.put(player.getUUID(), Math.max(0.0D, current - manaCost));
@@ -1717,13 +1789,16 @@ public final class VeyloriaServerEvents {
     }
 
     private void broadcastPlayerBars(MinecraftServer server, long gameTime) {
+        VeyloriaServerRuntime runtime = VeyloriaServerRuntime.instance();
+        var characterService = runtime.characterService();
+        var playerStatService = runtime.playerStatService();
         List<ServerPlayer> allPlayers = server.getPlayerList().getPlayers();
         java.util.Map<UUID, SubjectBarsSnapshot> subjects = new java.util.HashMap<>();
         for (ServerPlayer subject : allPlayers) {
             if (!isAuthenticated(subject)) {
                 continue;
             }
-            CharacterProfile profile = VeyloriaServerRuntime.instance().characterService().loadedProfile(subject.getUUID());
+            CharacterProfile profile = characterService.loadedProfile(subject.getUUID());
             if (profile == null) {
                 continue;
             }
@@ -1734,7 +1809,7 @@ public final class VeyloriaServerEvents {
                 manaMax = (int) Math.round(maxMana(profile.level(), stats));
                 manaCurrent = (int) Math.round(Math.min(manaMax, manaByPlayer.getOrDefault(subject.getUUID(), (double) manaMax)));
             }
-            double effectiveHpMax = Math.max(1.0D, VeyloriaServerRuntime.instance().playerStatService().computePlayerMaxHealth(subject, profile));
+            double effectiveHpMax = Math.max(1.0D, playerStatService.computePlayerMaxHealth(subject, profile));
             double hpRatio = Math.max(0.0D, Math.min(1.0D, subject.getHealth() / DEFAULT_PLAYER_MAX_HEALTH));
             int hpMax = (int) Math.ceil(effectiveHpMax);
             int hpCurrent = (int) Math.ceil(Math.max(0.0D, effectiveHpMax * hpRatio));
@@ -1860,6 +1935,25 @@ public final class VeyloriaServerEvents {
         HealingPool withNextTick(long nextTick) {
             return new HealingPool(dimension, center, radius, healPerTick, ownerUuid, expiresAtTick, nextTick, legendary);
         }
+    }
+
+    private void markPlayerInCombat(UUID playerUuid, long gameTime) {
+        if (playerUuid == null) {
+            return;
+        }
+        playerCombatUntilTickByPlayer.put(playerUuid, gameTime + PLAYER_COMBAT_TIMEOUT_TICKS);
+    }
+
+    private boolean isPlayerInCombat(UUID playerUuid, long gameTime) {
+        Long untilTick = playerCombatUntilTickByPlayer.get(playerUuid);
+        if (untilTick == null) {
+            return false;
+        }
+        if (untilTick < gameTime) {
+            playerCombatUntilTickByPlayer.remove(playerUuid, untilTick);
+            return false;
+        }
+        return true;
     }
 
     private void syncPlayerHud(ServerPlayer player, CharacterProfile profile) {

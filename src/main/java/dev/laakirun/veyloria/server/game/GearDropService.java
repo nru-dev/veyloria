@@ -7,7 +7,6 @@ import dev.laakirun.veyloria.common.model.ItemCategory;
 import dev.laakirun.veyloria.common.model.Rarity;
 import dev.laakirun.veyloria.server.VeyloriaServerRuntime;
 import dev.laakirun.veyloria.server.content.MobTemplate;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
@@ -38,7 +37,7 @@ public final class GearDropService {
     private final Map<UUID, DropMeta> trackedDrops = new ConcurrentHashMap<>();
 
     public void tick(MinecraftServer server) {
-        for (Map.Entry<UUID, DropMeta> entry : new ArrayList<>(trackedDrops.entrySet())) {
+        for (Map.Entry<UUID, DropMeta> entry : trackedDrops.entrySet()) {
             DropMeta meta = entry.getValue();
             ServerLevel level = findLevel(server, meta.dimension());
             if (level == null) {
@@ -258,12 +257,11 @@ public final class GearDropService {
         double rarityMul = rarityMultiplier(rarity);
         int main = (int) Math.round(kind.baseMainStat(itemLevel) * rarityMul);
         int stamina = (int) Math.round(kind.baseStamina(itemLevel) * rarityMul);
-        int armor = kind == WeaponKind.AXE ? (int) Math.round((1.5D + itemLevel * 0.06D) * rarityMul) : 0;
         BaseStats stats = switch (kind) {
-            case SWORD -> new BaseStats(main, stamina, armor, 0, 0);
-            case AXE -> new BaseStats((int) Math.round(main * 0.75D), (int) Math.round(stamina * 1.2D), armor, 0, 0);
-            case BOW -> new BaseStats(0, stamina, armor, main, 0);
-            case WAND -> new BaseStats(0, stamina, armor, 0, main);
+            case SWORD -> new BaseStats(main, stamina, 0, 0, 0);
+            case AXE -> new BaseStats((int) Math.round(main * 0.75D), (int) Math.round(stamina * 1.2D), 0, 0, 0);
+            case BOW -> new BaseStats(0, stamina, 0, main, 0);
+            case WAND -> new BaseStats(0, stamina, 0, 0, main);
         };
         double aoeChance = kind.baseAoeChance() + rarity.ordinal() * 0.02D;
         int aoeTargets = switch (kind) {
