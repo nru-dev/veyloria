@@ -86,5 +86,9 @@
   {
     "name": "z7_boss",
     "drop_slots": 4
+  },
+  {
+    "name": "dungeon_chest",
+    "drop_slots": 4
   }
 ]

@@ -835,5 +835,59 @@
     "max_quantity": 1,
     "is_guaranteed": true,
     "enabled": true
+  },
+  {
+    "loot_table": "dungeon_chest",
+    "item_template": "trail_ration",
+    "drop_weight": 1,
+    "min_quantity": 2,
+    "max_quantity": 4,
+    "is_guaranteed": true,
+    "enabled": true
+  },
+  {
+    "loot_table": "dungeon_chest",
+    "item_template": "combat_tonic",
+    "drop_weight": 20,
+    "min_quantity": 1,
+    "max_quantity": 2,
+    "is_guaranteed": false,
+    "enabled": true
+  },
+  {
+    "loot_table": "dungeon_chest",
+    "item_template": "frost_shard",
+    "drop_weight": 18,
+    "min_quantity": 1,
+    "max_quantity": 3,
+    "is_guaranteed": false,
+    "enabled": true
+  },
+  {
+    "loot_table": "dungeon_chest",
+    "item_template": "dusk_cloth",
+    "drop_weight": 16,
+    "min_quantity": 1,
+    "max_quantity": 2,
+    "is_guaranteed": false,
+    "enabled": true
+  },
+  {
+    "loot_table": "dungeon_chest",
+    "item_template": "elite_writ",
+    "drop_weight": 7,
+    "min_quantity": 1,
+    "max_quantity": 1,
+    "is_guaranteed": false,
+    "enabled": true
+  },
+  {
+    "loot_table": "dungeon_chest",
+    "item_template": "boss_sigil",
+    "drop_weight": 3,
+    "min_quantity": 1,
+    "max_quantity": 1,
+    "is_guaranteed": false,
+    "enabled": true
   }
 ]
