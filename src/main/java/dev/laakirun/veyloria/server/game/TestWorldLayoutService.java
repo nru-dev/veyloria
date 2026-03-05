@@ -214,13 +214,12 @@ public final class TestWorldLayoutService {
             if (decorated >= MAX_CHUNKS_PER_TICK) {
                 break;
             }
-            if (decoratedOverworldChunks.containsKey(key)) {
+            if (decoratedOverworldChunks.putIfAbsent(key, gameTime) != null) {
                 continue;
             }
             int chunkX = chunkX(key);
             int chunkZ = chunkZ(key);
             decorateChunk(level, chunkX, chunkZ);
-            decoratedOverworldChunks.put(key, gameTime);
             decorated++;
         }
     }
