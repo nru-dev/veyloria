@@ -1,3 +1,15 @@
+## 2026-03-05 Runtime Perf Refactor Addendum
+
+- В `StructureService` добавлены runtime-индексы:
+  - `instancesByDimension`,
+  - `instancesByDimensionAndTemplate`,
+  - пространственный индекс размещённых структур `placedSpatialByDimension`.
+- Проверка попадания игрока в структуру (`structureAt`) больше не делает линейный проход по всем `instancesById` с повторным lookup шаблонов; используется предрассчитанный spatial-entry по измерению.
+- Поиск структур для `locate`/nearest переведён на индекс по `dimension + templateId`, что убирает лишние полные обходы.
+- Индексы пересобираются при инициализации и после изменения состояния размещения (обычная постановка, `placeall`, auto-place по чанкам, lazy place через locate).
+- В `VeyloriaServerEvents` синхронизация структуры для HUD/баннера стала movement-driven: проверка входа/выхода структуры выполняется только при смене блока игроком, а не на каждый серверный тик.
+- Игровая логика и правила боёвки/спавна не изменены; изменения направлены только на снижение нагрузки сервера при большом количестве структур и онлайн-игроков.
+
 ## 2026-03-05 Common/Elite AI Patch Service Addendum
 
 - Added a separate server-side `CommonMobAiService` that patches AI behavior onto existing spawned mobs (`PathfinderMob`) instead of replacing entity types or introducing custom mob classes.

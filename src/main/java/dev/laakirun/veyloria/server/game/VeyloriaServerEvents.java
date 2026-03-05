@@ -36,6 +36,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ThreadLocalRandom;
 import net.minecraft.commands.Commands;
 import net.minecraft.commands.CommandSourceStack;
+import net.minecraft.core.BlockPos;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.network.chat.Component;
@@ -120,6 +121,7 @@ public final class VeyloriaServerEvents {
     private final java.util.Map<UUID, Long> playerCombatUntilTickByPlayer = new ConcurrentHashMap<>();
     private final java.util.Map<UUID, Integer> lastZoneByPlayer = new ConcurrentHashMap<>();
     private final java.util.Map<UUID, String> lastStructureByPlayer = new ConcurrentHashMap<>();
+    private final java.util.Map<UUID, Long> lastStructureProbePosByPlayer = new ConcurrentHashMap<>();
     private volatile boolean locateAliasesRegistered;
 
     private long lastSpawnTick;
@@ -258,6 +260,8 @@ public final class VeyloriaServerEvents {
         grantBestTestBow(player);
         runtime.playerLoadoutService().initializePlayer(player);
         lastZoneByPlayer.remove(player.getUUID());
+        lastStructureByPlayer.remove(player.getUUID());
+        lastStructureProbePosByPlayer.remove(player.getUUID());
         syncPlayerHud(player, profile);
     }
 
@@ -282,6 +286,7 @@ public final class VeyloriaServerEvents {
         playerCombatUntilTickByPlayer.remove(player.getUUID());
         lastZoneByPlayer.remove(player.getUUID());
         lastStructureByPlayer.remove(player.getUUID());
+        lastStructureProbePosByPlayer.remove(player.getUUID());
         invalidateBarsCache(player.getUUID());
     }
 
@@ -314,6 +319,7 @@ public final class VeyloriaServerEvents {
         playerCombatUntilTickByPlayer.clear();
         lastZoneByPlayer.clear();
         lastStructureByPlayer.clear();
+        lastStructureProbePosByPlayer.clear();
         locateAliasesRegistered = false;
         if (runtime.structureService() != null) {
             runtime.structureService().forceReload(null);
@@ -368,6 +374,7 @@ public final class VeyloriaServerEvents {
             if (!authenticated) {
                 lastZoneByPlayer.remove(player.getUUID());
                 lastStructureByPlayer.remove(player.getUUID());
+                lastStructureProbePosByPlayer.remove(player.getUUID());
                 continue;
             }
             syncZoneAnnouncement(player);
@@ -1404,9 +1411,15 @@ public final class VeyloriaServerEvents {
         if (structureService == null) {
             return;
         }
+        UUID playerUuid = player.getUUID();
+        long currentBlockPos = BlockPos.asLong(player.getBlockX(), player.getBlockY(), player.getBlockZ());
+        Long previousProbePos = lastStructureProbePosByPlayer.put(playerUuid, currentBlockPos);
+        if (previousProbePos != null && previousProbePos.longValue() == currentBlockPos) {
+            return;
+        }
         StructureService.StructurePresence structure = structureService.structureAt(level, player.getX(), player.getY(), player.getZ());
         String currentStructureId = structure == null ? "" : structure.structureId();
-        String previousStructureId = lastStructureByPlayer.put(player.getUUID(), currentStructureId);
+        String previousStructureId = lastStructureByPlayer.put(playerUuid, currentStructureId);
         if (Objects.equals(previousStructureId, currentStructureId)) {
             return;
         }
