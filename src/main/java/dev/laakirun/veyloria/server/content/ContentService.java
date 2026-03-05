@@ -31,6 +31,9 @@ public final class ContentService {
     private final Map<Long, StructureTemplate> structureTemplatesById = new LinkedHashMap<>();
     private final Map<String, StructureTemplate> structureTemplatesByCode = new LinkedHashMap<>();
     private final Map<Long, StructureSpawnRule> structureSpawnRulesById = new LinkedHashMap<>();
+    private List<MobSpawnGroup> spawnGroupsSnapshot = List.of();
+    private List<StructureTemplate> structureTemplatesSnapshot = List.of();
+    private List<StructureSpawnRule> structureSpawnRulesSnapshot = List.of();
 
     public ContentService(DatabaseManager databaseManager) {
         this.databaseManager = databaseManager;
@@ -45,6 +48,9 @@ public final class ContentService {
         structureTemplatesById.clear();
         structureTemplatesByCode.clear();
         structureSpawnRulesById.clear();
+        spawnGroupsSnapshot = List.of();
+        structureTemplatesSnapshot = List.of();
+        structureSpawnRulesSnapshot = List.of();
 
         try (Connection connection = databaseManager.connection()) {
             loadItems(connection);
@@ -53,6 +59,7 @@ public final class ContentService {
             loadSpawnGroups(connection);
             loadStructureTemplates(connection);
             loadStructureSpawnRules(connection);
+            refreshSnapshots();
         } catch (SQLException exception) {
             throw new IllegalStateException("Failed to load content", exception);
         }
@@ -82,7 +89,7 @@ public final class ContentService {
     }
 
     public List<MobSpawnGroup> spawnGroups() {
-        return List.copyOf(spawnGroupsById.values());
+        return spawnGroupsSnapshot;
     }
 
     public MobSpawnGroup spawnGroup(long id) {
@@ -98,7 +105,7 @@ public final class ContentService {
     }
 
     public List<StructureTemplate> structureTemplates() {
-        return List.copyOf(structureTemplatesById.values());
+        return structureTemplatesSnapshot;
     }
 
     public StructureSpawnRule structureSpawnRule(long id) {
@@ -106,7 +113,13 @@ public final class ContentService {
     }
 
     public List<StructureSpawnRule> structureSpawnRules() {
-        return List.copyOf(structureSpawnRulesById.values());
+        return structureSpawnRulesSnapshot;
+    }
+
+    private void refreshSnapshots() {
+        spawnGroupsSnapshot = List.copyOf(spawnGroupsById.values());
+        structureTemplatesSnapshot = List.copyOf(structureTemplatesById.values());
+        structureSpawnRulesSnapshot = List.copyOf(structureSpawnRulesById.values());
     }
 
     private void loadItems(Connection connection) throws SQLException {

@@ -400,7 +400,7 @@ public final class MobSpawnService {
 
     private void ensureSpawnIndex() {
         List<MobSpawnGroup> groups = VeyloriaServerRuntime.instance().contentService().spawnGroups();
-        if (Objects.equals(indexedGroupsSnapshot, groups)) {
+        if (indexedGroupsSnapshot == groups || Objects.equals(indexedGroupsSnapshot, groups)) {
             return;
         }
         Map<String, Map<Long, List<MobSpawnGroup>>> rebuilt = new HashMap<>();
@@ -418,7 +418,7 @@ public final class MobSpawnService {
         }
         spawnIndexByDimensionChunk.clear();
         spawnIndexByDimensionChunk.putAll(rebuilt);
-        indexedGroupsSnapshot = List.copyOf(groups);
+        indexedGroupsSnapshot = groups;
         LOGGER.info("Indexed {} spawn groups for {} dimensions", groups.size(), spawnIndexByDimensionChunk.size());
     }
 

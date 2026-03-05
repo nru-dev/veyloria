@@ -333,6 +333,7 @@ public final class VeyloriaServerEvents {
         }
         long gameTime = server.overworld().getGameTime();
         boolean shouldSyncProfile = gameTime - lastProfileTick >= PROFILE_SYNC_INTERVAL_TICKS;
+        var sessionManager = authService.sessionManager();
         testWorldLayoutService.tick(server);
         structureService.tick(server);
         gearDropService.tick(server);
@@ -341,7 +342,8 @@ public final class VeyloriaServerEvents {
             disableHunger(player);
             enforceBuildMode(player);
             updateServerTargetState(player, gameTime);
-            if (!authService.sessionManager().isAuthenticated(player.getUUID())) {
+            boolean authenticated = sessionManager.isAuthenticated(player.getUUID());
+            if (!authenticated) {
                 lastZoneByPlayer.remove(player.getUUID());
                 continue;
             }
@@ -349,7 +351,7 @@ public final class VeyloriaServerEvents {
             CharacterProfile profile = characterService.loadedProfile(player.getUUID());
             if (profile != null) {
                 playerLoadoutService.tick(player, profile.level());
-                if (shouldSyncProfile && authService.sessionManager().isAuthenticated(player.getUUID())) {
+                if (shouldSyncProfile) {
                     syncPlayerHud(player, profile);
                 }
             }
@@ -1941,6 +1943,7 @@ public final class VeyloriaServerEvents {
         var playerStatService = runtime.playerStatService();
         List<ServerPlayer> allPlayers = server.getPlayerList().getPlayers();
         java.util.Map<UUID, SubjectBarsSnapshot> subjects = new java.util.HashMap<>();
+        java.util.Map<String, List<SubjectBarsSnapshot>> subjectsByDimension = new java.util.HashMap<>();
         for (ServerPlayer subject : allPlayers) {
             if (!isAuthenticated(subject)) {
                 continue;
@@ -1960,12 +1963,15 @@ public final class VeyloriaServerEvents {
             double hpRatio = Math.max(0.0D, Math.min(1.0D, subject.getHealth() / DEFAULT_PLAYER_MAX_HEALTH));
             int hpMax = (int) Math.ceil(effectiveHpMax);
             int hpCurrent = (int) Math.ceil(Math.max(0.0D, effectiveHpMax * hpRatio));
-            subjects.put(subject.getUUID(), new SubjectBarsSnapshot(
+            SubjectBarsSnapshot snapshot = new SubjectBarsSnapshot(
                 subject.getUUID(),
                 subject,
                 subject.level().dimension().location().toString(),
                 new BarsPayload(hpCurrent, hpMax, manaCurrent, manaMax)
-            ));
+            );
+            subjects.put(subject.getUUID(), snapshot);
+            subjectsByDimension.computeIfAbsent(snapshot.dimensionId(), ignored -> new java.util.ArrayList<>())
+                .add(snapshot);
         }
 
         if (subjects.isEmpty()) {
@@ -1980,10 +1986,11 @@ public final class VeyloriaServerEvents {
             }
             activeViewers.add(viewer.getUUID());
             String viewerDimension = viewer.level().dimension().location().toString();
-            for (SubjectBarsSnapshot subject : subjects.values()) {
-                if (!viewerDimension.equals(subject.dimensionId())) {
-                    continue;
-                }
+            List<SubjectBarsSnapshot> sameDimensionSubjects = subjectsByDimension.get(viewerDimension);
+            if (sameDimensionSubjects == null || sameDimensionSubjects.isEmpty()) {
+                continue;
+            }
+            for (SubjectBarsSnapshot subject : sameDimensionSubjects) {
                 if (!subject.subjectUuid().equals(viewer.getUUID()) && viewer.distanceToSqr(subject.player()) > BARS_VIEW_DISTANCE_SQR) {
                     continue;
                 }
