@@ -10,6 +10,7 @@ import dev.laakirun.veyloria.server.db.DatabaseManager;
 import dev.laakirun.veyloria.server.db.MigrationService;
 import dev.laakirun.veyloria.server.db.SeedImporter;
 import dev.laakirun.veyloria.server.game.AuthLockService;
+import dev.laakirun.veyloria.server.game.CommonMobAiService;
 import dev.laakirun.veyloria.server.game.GearDropService;
 import dev.laakirun.veyloria.server.game.ItemFactory;
 import dev.laakirun.veyloria.server.game.LootService;
@@ -39,6 +40,7 @@ public final class VeyloriaServerRuntime {
     private ItemFactory itemFactory;
     private LootService lootService;
     private MobSpawnService mobSpawnService;
+    private CommonMobAiService commonMobAiService;
     private TestWorldLayoutService testWorldLayoutService;
     private PartyService partyService;
     private GearDropService gearDropService;
@@ -71,6 +73,7 @@ public final class VeyloriaServerRuntime {
         this.itemFactory = new ItemFactory();
         this.lootService = new LootService(contentService);
         this.mobSpawnService = new MobSpawnService();
+        this.commonMobAiService = new CommonMobAiService();
         this.testWorldLayoutService = new TestWorldLayoutService();
         this.partyService = new PartyService();
         this.gearDropService = new GearDropService();
@@ -137,6 +140,10 @@ public final class VeyloriaServerRuntime {
 
     public MobSpawnService mobSpawnService() {
         return mobSpawnService;
+    }
+
+    public CommonMobAiService commonMobAiService() {
+        return commonMobAiService;
     }
 
     public TestWorldLayoutService testWorldLayoutService() {

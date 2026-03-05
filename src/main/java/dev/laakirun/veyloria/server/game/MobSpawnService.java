@@ -614,6 +614,13 @@ public final class MobSpawnService {
             if (template == null) {
                 continue;
             }
+            if (template.mobType() != MobType.BOSS) {
+                suppressDaylightBurn(level, mob, template);
+                if (shouldRunShard(mob.getUUID(), gameTick, NAMEPLATE_UPDATE_SHARDS)) {
+                    updateNameplate(mob, template, gameTick);
+                }
+                continue;
+            }
             boolean updateTargetNow = shouldRunShard(mob.getUUID(), gameTick, TARGET_UPDATE_SHARDS);
             if (isEvading(entry.getKey(), gameTick)) {
                 if (updateTargetNow) {
@@ -754,6 +761,9 @@ public final class MobSpawnService {
             if (template == null || group == null) {
                 continue;
             }
+            if (template.mobType() != MobType.BOSS) {
+                continue;
+            }
             if (template.leashRadius() <= 0.0D) {
                 continue;
             }
@@ -785,6 +795,10 @@ public final class MobSpawnService {
             }
             MobTemplate template = templateForInstance(entry.getValue(), templateCache);
             if (template == null) {
+                blockedAttackSinceTick.remove(entry.getKey());
+                continue;
+            }
+            if (template.mobType() != MobType.BOSS) {
                 blockedAttackSinceTick.remove(entry.getKey());
                 continue;
             }
@@ -906,6 +920,9 @@ public final class MobSpawnService {
             MobTemplate template = templateForInstance(entry.getValue(), templateCache);
             MobSpawnGroup group = groupForInstance(entry.getValue(), groupCache);
             if (template == null || group == null) {
+                continue;
+            }
+            if (template.mobType() != MobType.BOSS) {
                 continue;
             }
             int cadence = switch (template.hostilityType()) {

@@ -1,3 +1,20 @@
+## 2026-03-05 Common/Elite AI Patch Service Addendum
+
+- Added a separate server-side `CommonMobAiService` that patches AI behavior onto existing spawned mobs (`PathfinderMob`) instead of replacing entity types or introducing custom mob classes.
+- AI patching is applied once per mob via persistent tags and restores deterministic behavior on entity join using custom goal/target goal installation with duplicate-safe replacement.
+- Common/Elite mobs now use unified rules:
+  - disposition matrix `allied / neutral / hostile`,
+  - home anchor + spawn group metadata (`homePos`, `groupId`, `leaderId`),
+  - idle bounded to `HOME_WANDER_RADIUS = 15`,
+  - combat leash `COMBAT_LEASH_RADIUS = 30`,
+  - return-stop radius `RETURN_STOP_RADIUS = 3`,
+  - unreachable timeout `CANNOT_REACH_TICKS = 100`,
+  - evade regen at `REGEN_PER_TICK = 1/40 max HP`.
+- During evade, patched mobs stop target acquisition, clear combat target, regenerate, and return to `homePos`; incoming damage to them is canceled until they return within stop radius.
+- Neutral/allied/hostile interaction checks moved to a unified `canTarget(...)` gate with recent-memory timers for conditional neutral cases (`neutral attacked player/hostile`, `neutral was provoked/attacked`).
+- Player damage to allied mobs is now blocked through incoming-damage guard and melee entry checks.
+- Legacy manual AI loops in `MobSpawnService` were restricted to `BOSS` mobs only; Common/Elite now rely on the new patched goal pipeline.
+
 ## 2026-03-04 Inventory Addendum
 
 - The custom loadout was expanded from the first 11 slots to 17 slots by appending new equipment entries instead of renumbering existing ones. This preserves already-saved player loadouts and avoids NBT migration for weapon, armor, boots, and consumable items that were already stored.

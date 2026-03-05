@@ -10,6 +10,7 @@ import dev.laakirun.veyloria.common.model.CharacterProfile;
 import dev.laakirun.veyloria.common.model.EquipSlot;
 import dev.laakirun.veyloria.common.model.HostilityType;
 import dev.laakirun.veyloria.common.model.ItemCategory;
+import dev.laakirun.veyloria.common.model.MobType;
 import dev.laakirun.veyloria.common.model.Rarity;
 import dev.laakirun.veyloria.common.config.RatesConfig;
 import dev.laakirun.veyloria.common.entity.HomingArrowEntity;
@@ -324,8 +325,12 @@ public final class VeyloriaServerEvents {
             mob.discard();
             return;
         }
+        CommonMobAiService commonMobAiService = VeyloriaServerRuntime.instance().commonMobAiService();
         if (spawnService.isManagedMob(mob)) {
             spawnService.registerManagedMob(mob);
+            if (event.getLevel() instanceof ServerLevel level && commonMobAiService != null) {
+                commonMobAiService.patchMob(level, mob, level.getGameTime());
+            }
             return;
         }
         event.setCanceled(true);
@@ -408,6 +413,15 @@ public final class VeyloriaServerEvents {
         long previousHitTick = lastPlayerAttackTick.getOrDefault(player.getUUID(), Long.MIN_VALUE / 4);
         if (gameTime - previousHitTick < ATTACK_COOLDOWN_TICKS) {
             return;
+        }
+        if (target instanceof Mob mobTarget && runtime.commonMobAiService() != null) {
+            runtime.commonMobAiService().alertGroupOnPlayerAttack(mobTarget, player, gameTime);
+            if (!runtime.commonMobAiService().isAttackableByPlayer(mobTarget, gameTime)) {
+                if (runtime.commonMobAiService().isAllied(mobTarget)) {
+                    ServerMarkers.sendError(player, CommonMobAiService.ALLIED_ATTACK_BLOCK_MESSAGE);
+                }
+                return;
+            }
         }
         if (template.hostilityType() == HostilityType.FRIENDLY) {
             ServerMarkers.sendError(player, "Дружелюбных существ атаковать нельзя");
@@ -569,11 +583,23 @@ public final class VeyloriaServerEvents {
 
     @SubscribeEvent
     public void onIncomingDamage(LivingIncomingDamageEvent event) {
+        VeyloriaServerRuntime runtime = VeyloriaServerRuntime.instance();
+        MobSpawnService spawnService = runtime.mobSpawnService();
+        CommonMobAiService commonMobAiService = runtime.commonMobAiService();
         Entity sourceEntity = event.getSource().getEntity();
-        MobTemplate sourceTemplate = sourceEntity == null ? null : VeyloriaServerRuntime.instance().mobSpawnService().template(sourceEntity.getUUID());
-        MobTemplate targetTemplate = VeyloriaServerRuntime.instance().mobSpawnService().template(event.getEntity().getUUID());
-        if (targetTemplate != null && event.getEntity().level() instanceof ServerLevel level
-            && VeyloriaServerRuntime.instance().mobSpawnService().isEvading(event.getEntity().getUUID(), level.getGameTime())) {
+        MobTemplate sourceTemplate = sourceEntity == null || spawnService == null ? null : spawnService.template(sourceEntity.getUUID());
+        MobTemplate targetTemplate = spawnService == null ? null : spawnService.template(event.getEntity().getUUID());
+        long gameTime = event.getEntity().level().getGameTime();
+
+        if (sourceEntity instanceof ServerPlayer playerSource && event.getEntity() instanceof Mob targetMob && commonMobAiService != null) {
+            commonMobAiService.alertGroupOnPlayerAttack(targetMob, playerSource, gameTime);
+        }
+
+        if (targetTemplate != null
+            && targetTemplate.mobType() == MobType.BOSS
+            && event.getEntity().level() instanceof ServerLevel level
+            && spawnService != null
+            && spawnService.isEvading(event.getEntity().getUUID(), level.getGameTime())) {
             event.setCanceled(true);
             return;
         }
@@ -581,7 +607,8 @@ public final class VeyloriaServerEvents {
         if (targetTemplate != null
             && targetTemplate.hostilityType() == HostilityType.HOSTILE
             && sourceEntity == null
-            && VeyloriaServerRuntime.instance().mobSpawnService().isDaylightBurnScenario(event.getEntity())
+            && spawnService != null
+            && spawnService.isDaylightBurnScenario(event.getEntity())
             && isFireTickDamage(event.getSource().getMsgId())) {
             if (event.getEntity() instanceof Mob mob && mob.getRemainingFireTicks() > 0) {
                 mob.setRemainingFireTicks(0);
@@ -590,61 +617,42 @@ public final class VeyloriaServerEvents {
             return;
         }
 
-        if (sourceTemplate != null && targetTemplate != null
+        if (sourceEntity instanceof LivingEntity sourceLiving && event.getEntity() instanceof LivingEntity targetLiving
+            && commonMobAiService != null) {
+            CommonMobAiService.DamageDecision decision = commonMobAiService.evaluateDamage(sourceLiving, targetLiving, gameTime);
+            if (!decision.allowed()) {
+                event.setCanceled(true);
+                if (sourceLiving instanceof ServerPlayer sourcePlayer && decision.errorMessage() != null) {
+                    ServerMarkers.sendError(sourcePlayer, decision.errorMessage());
+                }
+                return;
+            }
+            commonMobAiService.recordSuccessfulDamage(sourceLiving, targetLiving, gameTime);
+        } else if (sourceTemplate != null && targetTemplate != null
             && !isManagedMobCombatAllowed(sourceTemplate.hostilityType(), targetTemplate.hostilityType())) {
             event.setCanceled(true);
             return;
         }
 
-        if (sourceEntity instanceof ServerPlayer playerSource && event.getEntity() instanceof LivingEntity target) {
-            targetTemplate = VeyloriaServerRuntime.instance().mobSpawnService().template(target.getUUID());
-            if (targetTemplate != null) {
-                long gameTime = target.level().getGameTime();
-                markPlayerInCombat(playerSource.getUUID(), gameTime);
-                if (targetTemplate.hostilityType() == HostilityType.FRIENDLY) {
-                    event.setCanceled(true);
-                    ServerMarkers.sendError(playerSource, "Дружелюбных существ атаковать нельзя");
-                    return;
-                }
-                if (targetTemplate.hostilityType() == HostilityType.NEUTRAL) {
-                    VeyloriaServerRuntime.instance().mobSpawnService().markNeutralAggro(target.getUUID(), playerSource.getUUID(), gameTime);
-                    if (target instanceof Mob mob) {
-                        mob.setTarget(playerSource);
-                    }
-                }
-            }
+        if (sourceEntity instanceof ServerPlayer playerSource) {
+            markPlayerInCombat(playerSource.getUUID(), gameTime);
         }
 
         if (event.getEntity() instanceof ServerPlayer player) {
             if (sourceEntity != null && sourceTemplate != null) {
-                long gameTime = player.level().getGameTime();
                 markPlayerInCombat(player.getUUID(), gameTime);
                 if (sourceTemplate.hostilityType() == HostilityType.FRIENDLY) {
                     event.setCanceled(true);
                     return;
                 }
-                if (sourceTemplate.hostilityType() == HostilityType.NEUTRAL
-                    && sourceEntity != null) {
-                    boolean canNeutralDamage = VeyloriaServerRuntime.instance().mobSpawnService()
-                        .canNeutralDamage(sourceEntity.getUUID(), player.getUUID(), gameTime);
-                    if (!canNeutralDamage && sourceEntity instanceof Mob neutralMob && neutralMob.getTarget() != null
-                        && neutralMob.getTarget().getUUID().equals(player.getUUID())) {
-                        VeyloriaServerRuntime.instance().mobSpawnService().markNeutralAggro(sourceEntity.getUUID(), player.getUUID(), gameTime);
-                        canNeutralDamage = true;
-                    }
-                    if (!canNeutralDamage) {
-                        event.setCanceled(true);
-                        return;
-                    }
-                }
                 suppressKnockbackUntilTickByPlayer.put(player.getUUID(), player.level().getGameTime() + 4L);
                 Vec3 velocity = player.getDeltaMovement();
                 player.setDeltaMovement(0.0D, velocity.y, 0.0D);
-                CharacterProfile profile = VeyloriaServerRuntime.instance().characterService().loadedProfile(player.getUUID());
+                CharacterProfile profile = runtime.characterService().loadedProfile(player.getUUID());
                 if (profile != null) {
                     float original = event.getAmount();
                     int attackerLevel = sourceTemplate == null ? profile.level() : sourceTemplate.level();
-                    double mitigated = VeyloriaServerRuntime.instance().playerStatService()
+                    double mitigated = runtime.playerStatService()
                         .mitigateIncomingDamage(player, profile, original, attackerLevel);
                     if (sourceTemplate != null) {
                         mitigated *= sourceTemplate.hostilityType() == HostilityType.HOSTILE ? 1.55D : 1.30D;
@@ -869,6 +877,10 @@ public final class VeyloriaServerEvents {
         MobTemplate template = spawnService.template(mob.getUUID());
         if (template == null || template.hostilityType() == HostilityType.FRIENDLY) {
             return false;
+        }
+        CommonMobAiService commonMobAiService = VeyloriaServerRuntime.instance().commonMobAiService();
+        if (commonMobAiService != null && commonMobAiService.isCommonOrElite(mob)) {
+            return commonMobAiService.isAttackableByPlayer(mob, gameTime);
         }
         return !spawnService.isEvading(mob.getUUID(), gameTime);
     }
@@ -1898,6 +1910,10 @@ public final class VeyloriaServerEvents {
     }
 
     private boolean isAttackableByPlayers(Mob mob) {
+        CommonMobAiService commonMobAiService = VeyloriaServerRuntime.instance().commonMobAiService();
+        if (commonMobAiService != null && commonMobAiService.isCommonOrElite(mob)) {
+            return commonMobAiService.isAttackableByPlayer(mob, mob.level().getGameTime());
+        }
         MobTemplate template = VeyloriaServerRuntime.instance().mobSpawnService().template(mob.getUUID());
         if (template == null || template.hostilityType() == HostilityType.FRIENDLY) {
             return false;
