@@ -11,6 +11,8 @@ MVP RPG-мод для Minecraft `1.21.1` на `NeoForge`, где сервер х
 - формула уровней 1-80 и модификаторы EXP по разнице уровней
 - отдельные серверные рейты из `config/veyloria/rates.yml`
 - data-driven шаблоны предметов, мобов, loot tables и spawn groups
+- отдельный data-driven модуль кастомных структур (templates/rules/instances) с генерацией количества структур по зонам
+- встроенный пресет структуры `veyloria:town` (большой процедурный город) через `schematic_file=generated:town`
 - серверный спавн обычных мобов, элиты и босса рядом с активными игроками с chunk-индексацией spawn groups
 - серверный расчёт урона по мобам, серверное распределение EXP/валюты/персонального лута
 - враждебность `friendly/neutral/hostile` с фиксированными правилами:
@@ -31,7 +33,8 @@ MVP RPG-мод для Minecraft `1.21.1` на `NeoForge`, где сервер х
 - мана активна только когда у игрока экипировано оружие, которое реально её использует (например, палочка); иначе `MP=0`
 - используется стандартный vanilla-инвентарь и vanilla-hotbar (кастомный экран инвентаря удалён)
 - для не-OP игроков запрещены строительство/ломание блоков (Adventure + серверные блокировки)
-- добавлены команды: `/veyloria rates ...` (OP only, runtime-only) и расширенный набор команд группы `/party` + алиас `/p`
+- добавлены команды: `/veyloria rates ...`, `/veyloria structures ...` (OP only, runtime-only), поиск структур через `/locate structure veyloria:<id>` (alias: `/locale`) и расширенный набор команд группы `/party` + алиас `/p`
+- WorldEdit подключён для dev-рантайма через `run/mods/worldedit-mod-7.3.8.jar`; поддерживаются источники структур `.schem` и `.nbt`
 
 ## Требования
 
@@ -69,13 +72,42 @@ bash ./gradlew runClient
 - БД: `data/veyloria/rpg.db`
 - миграции в ресурсах: `src/main/resources/data/veyloria/migrations`
 - seed-данные в ресурсах: `src/main/resources/data/veyloria/seeds`
+- seed-файлы структур: `structure_templates.json`, `structure_spawn_rules.json`
+- директория схем (рекомендуется): `run/data/veyloria/structures`
 - layout и координаты тестовых зон: `docs/world-layout.md`
+
+## Добавление новой структуры (WorldEdit -> БД)
+
+1. Подготовить файл структуры:
+   - вариант A: `.schem` (WorldEdit),
+   - вариант B: ванильный `.nbt` (Structure Block / template format).
+2. Положить файл в `run/data/veyloria/structures/<имя>.schem` или `run/data/veyloria/structures/<имя>.nbt`.
+3. Добавить шаблон в `src/main/resources/data/veyloria/seeds/structure_templates.json`:
+   - `code`, `name`, `structure_type`, `schematic_file`, `size_x/y/z`, `enabled`.
+   - `schematic_file` может указывать как путь к `.schem/.nbt`, так и встроенный генератор (`generated:<preset>`, например `generated:town`).
+4. Добавить правило спавна в `src/main/resources/data/veyloria/seeds/structure_spawn_rules.json`:
+   - диапазон зон, количество на зону, дистанции от дороги/между постройками,
+   - `near_spawn_rules_json` и `inside_spawn_rules_json` для мобов возле/внутри.
+5. Перезапустить сервер или выполнить `OP` команду `/veyloria structures reload`.
+
+## Поведение структур (актуально)
+
+- Точки структур генерируются data-driven из seed-правил и сохраняются в `structure_instances`.
+- Автоматическая постановка происходит лениво: когда чанки структуры загружены сервером.
+- Перед вставкой структура подготавливает область через layout-сервис, чтобы суперплоская декорация не перетирала поставленные блоки.
+- `locate` работает для кастомных id и возвращает опорную точку внутри реально поставленной схемы (а не сырой origin из БД).
+- Если структура в БД отмечена как `placed`, но в мире отсутствует (например, была повреждена), `locate` восстанавливает ее на месте и возвращает координаты.
 
 ## Runtime-команды
 
 - `OP`: `/veyloria rates show`
 - `OP`: `/veyloria rates set <xp|currency|resource|equipment|consumable|boss_respawn> <value>`
 - `OP`: `/veyloria rates reset`
+- `OP`: `/veyloria structures status`
+- `OP`: `/veyloria structures reload`
+- `OP`: `/veyloria structures placeall` — принудительно разместить все pending-структуры в текущем измерении
+- `OP`: `/locate structure veyloria:<id>` — найти ближайшую кастомную структуру; если она еще не размещена или отмечена `placed`, но отсутствует в мире, структура будет поставлена/восстановлена и выданы координаты
+- `OP`: `/locale structure veyloria:<id>` — алиас команды выше
 - `все игроки`: `/party <nickname>` или `/p <nickname>` — создать группу с игроком (если вы без группы) или добавить игрока (если вы лидер)
 - `все игроки`: `/party add <nickname>` или `/p add <nickname>` — добавить игрока только в уже существующую группу (только лидер)
 - `все игроки`: `/party kick <nickname>` или `/p kick <nickname>` — исключить игрока (только лидер)
@@ -97,5 +129,5 @@ bash ./gradlew runClient
 ## Ограничения MVP
 
 - нет квестов, классов, талантов, PvP, аукциона, гильдий и инстансов
-- кастомные постройки с `structure_id` и отдельными правилами спавна в локациях пока не активированы в runtime
+- in-game редактора структур нет: схемы создаются через WorldEdit и подключаются через seed-данные
 - runtime-проверка полного Minecraft-цикла в этой среде не автоматизирована; см. чеклист в `docs/manual-checklist.md`

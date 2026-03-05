@@ -28,6 +28,9 @@ public final class ContentService {
     private final Map<Long, LootTableDefinition> lootTablesById = new LinkedHashMap<>();
     private final Map<Long, MobTemplate> mobTemplatesById = new LinkedHashMap<>();
     private final Map<Long, MobSpawnGroup> spawnGroupsById = new LinkedHashMap<>();
+    private final Map<Long, StructureTemplate> structureTemplatesById = new LinkedHashMap<>();
+    private final Map<String, StructureTemplate> structureTemplatesByCode = new LinkedHashMap<>();
+    private final Map<Long, StructureSpawnRule> structureSpawnRulesById = new LinkedHashMap<>();
 
     public ContentService(DatabaseManager databaseManager) {
         this.databaseManager = databaseManager;
@@ -39,17 +42,27 @@ public final class ContentService {
         lootTablesById.clear();
         mobTemplatesById.clear();
         spawnGroupsById.clear();
+        structureTemplatesById.clear();
+        structureTemplatesByCode.clear();
+        structureSpawnRulesById.clear();
 
         try (Connection connection = databaseManager.connection()) {
             loadItems(connection);
             loadLootTables(connection);
             loadMobTemplates(connection);
             loadSpawnGroups(connection);
+            loadStructureTemplates(connection);
+            loadStructureSpawnRules(connection);
         } catch (SQLException exception) {
             throw new IllegalStateException("Failed to load content", exception);
         }
-        LOGGER.info("Loaded {} items, {} loot tables, {} mob templates and {} spawn groups",
-            itemsById.size(), lootTablesById.size(), mobTemplatesById.size(), spawnGroupsById.size());
+        LOGGER.info("Loaded {} items, {} loot tables, {} mob templates, {} spawn groups, {} structure templates and {} structure rules",
+            itemsById.size(),
+            lootTablesById.size(),
+            mobTemplatesById.size(),
+            spawnGroupsById.size(),
+            structureTemplatesById.size(),
+            structureSpawnRulesById.size());
     }
 
     public ItemTemplate itemByCode(String code) {
@@ -74,6 +87,26 @@ public final class ContentService {
 
     public MobSpawnGroup spawnGroup(long id) {
         return spawnGroupsById.get(id);
+    }
+
+    public StructureTemplate structureTemplate(long id) {
+        return structureTemplatesById.get(id);
+    }
+
+    public StructureTemplate structureTemplate(String code) {
+        return structureTemplatesByCode.get(code);
+    }
+
+    public List<StructureTemplate> structureTemplates() {
+        return List.copyOf(structureTemplatesById.values());
+    }
+
+    public StructureSpawnRule structureSpawnRule(long id) {
+        return structureSpawnRulesById.get(id);
+    }
+
+    public List<StructureSpawnRule> structureSpawnRules() {
+        return List.copyOf(structureSpawnRulesById.values());
     }
 
     private void loadItems(Connection connection) throws SQLException {
@@ -182,6 +215,49 @@ public final class ContentService {
                     true
                 );
                 spawnGroupsById.put(group.id(), group);
+            }
+        }
+    }
+
+    private void loadStructureTemplates(Connection connection) throws SQLException {
+        try (ResultSet resultSet = connection.createStatement().executeQuery("SELECT * FROM structure_templates WHERE enabled = 1")) {
+            while (resultSet.next()) {
+                StructureTemplate template = new StructureTemplate(
+                    resultSet.getLong("id"),
+                    resultSet.getString("code"),
+                    resultSet.getString("name"),
+                    resultSet.getString("structure_type"),
+                    resultSet.getString("schematic_file"),
+                    resultSet.getInt("size_x"),
+                    resultSet.getInt("size_y"),
+                    resultSet.getInt("size_z"),
+                    true
+                );
+                structureTemplatesById.put(template.id(), template);
+                structureTemplatesByCode.put(template.code(), template);
+            }
+        }
+    }
+
+    private void loadStructureSpawnRules(Connection connection) throws SQLException {
+        try (ResultSet resultSet = connection.createStatement().executeQuery("SELECT * FROM structure_spawn_rules WHERE enabled = 1")) {
+            while (resultSet.next()) {
+                StructureSpawnRule rule = new StructureSpawnRule(
+                    resultSet.getLong("id"),
+                    resultSet.getLong("structure_template_id"),
+                    resultSet.getString("dimension"),
+                    resultSet.getInt("zone_min"),
+                    resultSet.getInt("zone_max"),
+                    resultSet.getInt("count_min_per_zone"),
+                    resultSet.getInt("count_max_per_zone"),
+                    resultSet.getDouble("road_distance_min"),
+                    resultSet.getDouble("road_distance_max"),
+                    resultSet.getDouble("min_distance_between"),
+                    resultSet.getString("near_spawn_rules_json"),
+                    resultSet.getString("inside_spawn_rules_json"),
+                    true
+                );
+                structureSpawnRulesById.put(rule.id(), rule);
             }
         }
     }

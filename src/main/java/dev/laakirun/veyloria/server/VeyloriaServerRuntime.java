@@ -20,6 +20,7 @@ import dev.laakirun.veyloria.server.game.PlayerStatService;
 import dev.laakirun.veyloria.server.game.TestWorldLayoutService;
 import dev.laakirun.veyloria.server.profile.CharacterService;
 import dev.laakirun.veyloria.server.profile.LevelService;
+import dev.laakirun.veyloria.server.structure.StructureService;
 import dev.laakirun.veyloria.common.targeting.TargetingProfile;
 import dev.laakirun.veyloria.common.targeting.TargetingService;
 
@@ -43,6 +44,7 @@ public final class VeyloriaServerRuntime {
     private PartyService partyService;
     private GearDropService gearDropService;
     private PlayerLoadoutService playerLoadoutService;
+    private StructureService structureService;
     private TargetingService targetingService;
     private TargetingProfile targetingProfile;
 
@@ -75,6 +77,7 @@ public final class VeyloriaServerRuntime {
         this.partyService = new PartyService();
         this.gearDropService = new GearDropService();
         this.playerLoadoutService = new PlayerLoadoutService();
+        this.structureService = new StructureService(databaseManager);
         this.targetingService = new TargetingService();
         this.targetingProfile = TargetingProfile.defaults();
     }
@@ -153,6 +156,10 @@ public final class VeyloriaServerRuntime {
 
     public PlayerLoadoutService playerLoadoutService() {
         return playerLoadoutService;
+    }
+
+    public StructureService structureService() {
+        return structureService;
     }
 
     public TargetingService targetingService() {

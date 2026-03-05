@@ -51,7 +51,6 @@ public final class TestWorldLayoutService {
 
     private static final int DECORATION_CHUNK_RADIUS = 6;
     private static final int MAX_CHUNKS_PER_TICK = 48;
-    private static final long CHUNK_REFRESH_INTERVAL_TICKS = 40L;
     private static final int SEPARATOR_HALF_THICKNESS = 1;
     private static final int SIGN_OFFSET_X = SAFE_HALF_WIDTH + 2;
     private static final BlockState ROAD_BLOCK = Blocks.STONE_BRICKS.defaultBlockState();
@@ -148,6 +147,29 @@ public final class TestWorldLayoutService {
         player.getPersistentData().putBoolean(TAG_STARTER_SPAWNED, true);
     }
 
+    public void prepareStructureArea(ServerLevel level, int minX, int minZ, int maxX, int maxZ) {
+        if (level == null) {
+            return;
+        }
+        if (!OVERWORLD_DIMENSION.equals(level.dimension().location().toString())) {
+            return;
+        }
+        int minChunkX = Math.floorDiv(minX, 16);
+        int maxChunkX = Math.floorDiv(maxX, 16);
+        int minChunkZ = Math.floorDiv(minZ, 16);
+        int maxChunkZ = Math.floorDiv(maxZ, 16);
+        long gameTime = level.getGameTime();
+        for (int chunkX = minChunkX; chunkX <= maxChunkX; chunkX++) {
+            for (int chunkZ = minChunkZ; chunkZ <= maxChunkZ; chunkZ++) {
+                if (!level.hasChunk(chunkX, chunkZ)) {
+                    level.getChunk(chunkX, chunkZ);
+                }
+                decorateChunk(level, chunkX, chunkZ);
+                decoratedOverworldChunks.put(chunkKey(chunkX, chunkZ), gameTime);
+            }
+        }
+    }
+
     private void configureWorld(ServerLevel overworld, MinecraftServer server) {
         if (worldConfigured) {
             return;
@@ -192,8 +214,7 @@ public final class TestWorldLayoutService {
             if (decorated >= MAX_CHUNKS_PER_TICK) {
                 break;
             }
-            Long lastDecoratedTick = decoratedOverworldChunks.get(key);
-            if (lastDecoratedTick != null && gameTime - lastDecoratedTick < CHUNK_REFRESH_INTERVAL_TICKS) {
+            if (decoratedOverworldChunks.containsKey(key)) {
                 continue;
             }
             int chunkX = chunkX(key);

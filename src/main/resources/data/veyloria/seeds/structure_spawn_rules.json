@@ -1,0 +1,44 @@
+[
+  {
+    "structure_template": "starter_outpost",
+    "dimension": "minecraft:overworld",
+    "zone_min": 1,
+    "zone_max": 2,
+    "count_min_per_zone": 1,
+    "count_max_per_zone": 2,
+    "road_distance_min": 28.0,
+    "road_distance_max": 160.0,
+    "min_distance_between": 190.0,
+    "near_spawn_rules_json": "[{\"mob_template\":\"forest_wolf\",\"min_alive\":2,\"max_alive\":4,\"radius\":18}]",
+    "inside_spawn_rules_json": "[{\"mob_template\":\"bandit_guard\",\"min_alive\":1,\"max_alive\":2,\"radius\":8}]",
+    "enabled": false
+  },
+  {
+    "structure_template": "we_1",
+    "dimension": "minecraft:overworld",
+    "zone_min": 1,
+    "zone_max": 7,
+    "count_min_per_zone": 1,
+    "count_max_per_zone": 2,
+    "road_distance_min": 24.0,
+    "road_distance_max": 220.0,
+    "min_distance_between": 96.0,
+    "near_spawn_rules_json": "[]",
+    "inside_spawn_rules_json": "[]",
+    "enabled": true
+  },
+  {
+    "structure_template": "town",
+    "dimension": "minecraft:overworld",
+    "zone_min": 1,
+    "zone_max": 7,
+    "count_min_per_zone": 1,
+    "count_max_per_zone": 1,
+    "road_distance_min": 56.0,
+    "road_distance_max": 210.0,
+    "min_distance_between": 220.0,
+    "near_spawn_rules_json": "[]",
+    "inside_spawn_rules_json": "[]",
+    "enabled": true
+  }
+]
