@@ -3,7 +3,6 @@ package dev.laakirun.veyloria.common.network;
 import dev.laakirun.veyloria.client.VeyloriaClientState;
 import dev.laakirun.veyloria.common.VeyloriaConstants;
 import dev.laakirun.veyloria.common.item.PlayerLoadoutData;
-import dev.laakirun.veyloria.common.menu.VeyloriaInventoryMenu;
 import dev.laakirun.veyloria.server.VeyloriaServerRuntime;
 import dev.laakirun.veyloria.server.game.VeyloriaServerEvents;
 import net.minecraft.core.HolderLookup;
@@ -11,11 +10,9 @@ import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.RegistryFriendlyByteBuf;
 import net.minecraft.network.codec.ByteBufCodecs;
 import net.minecraft.network.codec.StreamCodec;
-import net.minecraft.network.chat.Component;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraft.world.SimpleMenuProvider;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent;
@@ -30,12 +27,6 @@ public final class VeyloriaNetwork {
     @SubscribeEvent
     public static void onRegisterPayloads(RegisterPayloadHandlersEvent event) {
         var registrar = event.registrar(NETWORK_VERSION);
-        registrar.playToServer(OpenInventoryPayload.TYPE, OpenInventoryPayload.STREAM_CODEC, (payload, context) ->
-            context.enqueueWork(() -> {
-                if (context.player() instanceof ServerPlayer player) {
-                    openInventory(player);
-                }
-            }));
         registrar.playToServer(SelectActionSlotPayload.TYPE, SelectActionSlotPayload.STREAM_CODEC, (payload, context) ->
             context.enqueueWork(() -> {
                 if (context.player() instanceof ServerPlayer player) {
@@ -66,20 +57,11 @@ public final class VeyloriaNetwork {
         registrar.playToClient(LoadoutSnapshotPayload.TYPE, LoadoutSnapshotPayload.STREAM_CODEC, (payload, context) ->
             context.enqueueWork(() -> {
                 PlayerLoadoutData loadout = new PlayerLoadoutData();
-                loadout.deserializeNBT(context.player().registryAccess(), payload.loadoutTag());
-                VeyloriaClientState.instance().setLoadout(loadout);
+                if (context.player() != null) {
+                    loadout.deserializeNBT(context.player().registryAccess(), payload.loadoutTag());
+                    VeyloriaClientState.instance().setLoadout(loadout);
+                }
             }));
-    }
-
-    private static void openInventory(ServerPlayer player) {
-        if (player == null) {
-            return;
-        }
-        VeyloriaServerRuntime.instance().playerLoadoutService().initializePlayer(player);
-        player.openMenu(new SimpleMenuProvider(
-            (containerId, playerInventory, owner) -> new VeyloriaInventoryMenu(containerId, playerInventory, player),
-            Component.literal("Инвентарь")
-        ));
     }
 
     public static LoadoutSnapshotPayload loadoutSnapshot(PlayerLoadoutData loadout, HolderLookup.Provider provider) {
@@ -88,18 +70,6 @@ public final class VeyloriaNetwork {
 
     public static ConsumableUseStatePayload consumableUseState(int consumableSlot, boolean active) {
         return new ConsumableUseStatePayload(consumableSlot, active);
-    }
-
-    public record OpenInventoryPayload() implements CustomPacketPayload {
-        public static final Type<OpenInventoryPayload> TYPE =
-            new Type<>(ResourceLocation.fromNamespaceAndPath(VeyloriaConstants.MOD_ID, "open_inventory"));
-        public static final StreamCodec<RegistryFriendlyByteBuf, OpenInventoryPayload> STREAM_CODEC =
-            StreamCodec.unit(new OpenInventoryPayload());
-
-        @Override
-        public Type<OpenInventoryPayload> type() {
-            return TYPE;
-        }
     }
 
     public record SelectActionSlotPayload(int actionSlot) implements CustomPacketPayload {

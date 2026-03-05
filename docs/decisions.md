@@ -47,6 +47,23 @@
   - starter bow (`templateCode = test_best_bow`) uses `50` block target range.
 - Ammo loadout slot capacity was reverted back to vanilla `64` (slot-local), because `9999` stacks caused unstable runtime/save behavior in practice.
 
+## 2026-03-05 Combat Consistency + Docs Lock
+
+- Custom inventory screen was removed from active UX; players use vanilla inventory and vanilla hotbar again. RPG loadout remains server-side data (`PlayerLoadoutData`) and equipment mirroring logic.
+- Player knockback from managed mob hits is hard-suppressed server-side:
+  - incoming mob damage sets short knockback suppression window,
+  - `LivingKnockBackEvent` forcefully zeroes knockback vectors for this window,
+  - horizontal player velocity is reset on hit as fallback.
+- Managed mob relations were normalized:
+  - only `friendly <-> hostile` managed mob combat is allowed,
+  - other managed mob-vs-mob combinations are canceled.
+- Neutral retaliation was hardened:
+  - neutral mobs keep aggro target synchronized every tick (not only shard tick),
+  - neutral mobs reacquire target from aggro state even if vanilla AI drops `target`,
+  - incoming damage guard allows neutral damage when neutral currently targets that player and refreshes aggro state.
+- Spawn group size for non-boss managed mobs is uniform random `1..6`; bosses remain single-instance units.
+- Manual checklist and README were updated to match current runtime behavior and to remove outdated assumptions about the removed custom inventory UI.
+
 # Veyloria MVP Decisions
 
 ## 2026-03-04

@@ -15,6 +15,7 @@ public final class ServerMarkers {
     public static final String ERROR = "[veyloria:error]";
     public static final String BARS = "[veyloria:bars]";
     public static final String TARGET = "[veyloria:target]";
+    public static final String ZONE = "[veyloria:zone]";
 
     private ServerMarkers() {
     }
@@ -71,6 +72,15 @@ public final class ServerMarkers {
     public static void sendTarget(ServerPlayer player, UUID targetUuid) {
         player.sendSystemMessage(Component.literal(
             TARGET + "|uuid=" + (targetUuid == null ? "" : targetUuid)
+        ));
+    }
+
+    public static void sendZone(ServerPlayer player, int zoneIndex, String zoneName, String levelRange) {
+        player.sendSystemMessage(Component.literal(
+            ZONE
+                + "|index=" + zoneIndex
+                + "|name=" + zoneName
+                + "|range=" + levelRange
         ));
     }
 }

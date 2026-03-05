@@ -71,6 +71,8 @@ neoForge {
 
         configureEach {
             systemProperty 'forge.logging.markers', 'REGISTRIES'
+            systemProperty 'file.encoding', 'UTF-8'
+            systemProperty 'sun.jnu.encoding', 'UTF-8'
             logLevel = org.slf4j.event.Level.INFO
         }
     }

@@ -1,11 +1,3 @@
-## Inventory Update
-
-- The custom inventory now uses 17 loadout slots: `1/2/3` for weapons, `4/5/6/7` for consumables, `ammo`, and player equipment slots for helmet, chest, legs, boots, pendant, two rings, and two accessories.
-- The inventory screen was rebuilt around a shared layout: top-right copper counter, center paper-doll, stat card for `Power/Vitality/Armor/Crit/Haste`, and corrected slot alignment between the visual frame and the real menu coordinates.
-- The bottom-right HUD still mirrors the combat loadout with three weapon rows and four consumable quick slots. Empty HUD slots keep the frame and key label, but do not render an item icon.
-- Number keys `1/2/3` switch weapons, while `4/5/6/7` instantly use the consumable from that slot through a server-authoritative offhand auto-use flow that keeps the standard vanilla eating/drinking animation until finish.
-- Stat bonuses now apply as soon as an item is placed into an equipped loadout slot, including non-active weapon slots. Consumables do not grant passive stats, and ammo is reserved for arrows or future custom ammo items.
-
 # Veyloria MVP
 
 MVP RPG-мод для Minecraft `1.21.1` на `NeoForge`, где сервер хранит аккаунты, профили, мобов, спавны, лут и прогрессию 1-80.
@@ -21,46 +13,49 @@ MVP RPG-мод для Minecraft `1.21.1` на `NeoForge`, где сервер х
 - data-driven шаблоны предметов, мобов, loot tables и spawn groups
 - серверный спавн обычных мобов, элиты и босса рядом с активными игроками с chunk-индексацией spawn groups
 - серверный расчёт урона по мобам, серверное распределение EXP/валюты/персонального лута
-- учёт `hostility_type` в бою (friendly/neutral/hostile), применение `aggro_radius`, `leash_radius`, `pack_spread`
+- враждебность `friendly/neutral/hostile` с фиксированными правилами:
+  - `friendly` не получают/не наносят урон игрокам
+  - `neutral` не атакуют первыми, но гарантированно отвечают после удара игрока
+  - между управляемыми мобами разрешён только бой `friendly <-> hostile`; остальные пары не дерутся
+- размер группы спавна для обычных/элитных мобов роллится равновероятно в диапазоне `1..6`; боссы всегда `1`
+- hostile-мобы не получают урон от солнца и спавнятся независимо от времени суток
+- урон по игроку от мобов не вызывает отпинывание (серверно подавлен knockback)
 - базовые кастомные предметы через vanilla item stacks + `CustomData`
-- клиентский HUD для copper/маны и уведомлений, tooltip RPG-предметов
+- клиентский HUD: кастомные полосы `HP/MP`, числовой уровень, числовая броня, медь, уведомления, tooltip RPG-предметов и fade in/out баннер текущей локации
 - надголовные полоски ресурсов у игроков: `HP` + `MP` в одном неймплейте
+- скрыты vanilla индикаторы `HP/голод/броня/XP`, используется только кастомный HUD
 - тестовая world-layout схема: 7 северных зон `1-80`, дорога шириной 5 блоков, безопасная полоса 15 блоков, границы зон из белой шерсти
 - отключён ванильный спавн мобов (`doMobSpawning=false`) и запрещено появление некастомных мобов
 - seed-контент из ресурсов: 38 кастомных мобов, 93 spawn groups, 22 loot tables
 - дроп экипировки реализован серверно (редкости, уровни предметов, оружие/броня, спецэффекты)
 - мана активна только когда у игрока экипировано оружие, которое реально её использует (например, палочка); иначе `MP=0`
-- кастомный инвентарь заменяет vanilla inventory и hotbar:
-  - слева слоты `основное/дополнительное/дальний бой` и броня
-  - справа обычное хранилище игрока
-  - переключение активного оружия на `1/2/3`
-  - vanilla toolbar скрыт и больше не используется
+- используется стандартный vanilla-инвентарь и vanilla-hotbar (кастомный экран инвентаря удалён)
 - для не-OP игроков запрещены строительство/ломание блоков (Adventure + серверные блокировки)
 - добавлены команды: `/veyloria rates ...` (OP only, runtime-only) и расширенный набор команд группы `/party` + алиас `/p`
 
 ## Требования
 
 - Java `21`
-- Windows PowerShell / `cmd`
+- macOS/Linux shell или Windows PowerShell / `cmd`
 
 ## Быстрый запуск
 
 1. Собрать мод:
 
-```powershell
-.\gradlew.bat build
+```bash
+bash ./gradlew build
 ```
 
 2. Запустить локальный сервер:
 
-```powershell
-.\start-server.bat
+```bash
+bash ./gradlew runServer
 ```
 
 3. Запустить клиент из dev-среды:
 
-```powershell
-.\gradlew.bat runClient
+```bash
+bash ./gradlew runClient
 ```
 
 > Для интегрированного мира (`runClient`) `server.properties` не применяется напрямую. Мод принудительно выравнивает тестовую зону и переносит игрока в стартовую точку зоны `1-10`.

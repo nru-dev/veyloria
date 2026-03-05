@@ -115,6 +115,7 @@ public final class VeyloriaServerEvents {
     private final java.util.Map<UUID, DamageTextState> damageTextById = new ConcurrentHashMap<>();
     private final java.util.Map<UUID, Long> suppressKnockbackUntilTickByPlayer = new ConcurrentHashMap<>();
     private final java.util.Map<UUID, Long> playerCombatUntilTickByPlayer = new ConcurrentHashMap<>();
+    private final java.util.Map<UUID, Integer> lastZoneByPlayer = new ConcurrentHashMap<>();
 
     private long lastSpawnTick;
     private long lastProfileTick;
@@ -184,6 +185,7 @@ public final class VeyloriaServerEvents {
         grantBestTestSword(player);
         grantBestTestBow(player);
         runtime.playerLoadoutService().initializePlayer(player);
+        lastZoneByPlayer.remove(player.getUUID());
         syncPlayerHud(player, profile);
     }
 
@@ -202,6 +204,7 @@ public final class VeyloriaServerEvents {
         targetMarkerByPlayer.remove(player.getUUID());
         suppressKnockbackUntilTickByPlayer.remove(player.getUUID());
         playerCombatUntilTickByPlayer.remove(player.getUUID());
+        lastZoneByPlayer.remove(player.getUUID());
         invalidateBarsCache(player.getUUID());
     }
 
@@ -232,6 +235,7 @@ public final class VeyloriaServerEvents {
         damageTextById.clear();
         suppressKnockbackUntilTickByPlayer.clear();
         playerCombatUntilTickByPlayer.clear();
+        lastZoneByPlayer.clear();
     }
 
     @SubscribeEvent
@@ -263,6 +267,11 @@ public final class VeyloriaServerEvents {
             disableHunger(player);
             enforceBuildMode(player);
             updateServerTargetState(player, gameTime);
+            if (!authService.sessionManager().isAuthenticated(player.getUUID())) {
+                lastZoneByPlayer.remove(player.getUUID());
+                continue;
+            }
+            syncZoneAnnouncement(player);
             CharacterProfile profile = characterService.loadedProfile(player.getUUID());
             if (profile != null) {
                 playerLoadoutService.tick(player, profile.level());
@@ -1149,6 +1158,23 @@ public final class VeyloriaServerEvents {
 
     private int playerZone(ServerPlayer player) {
         return TestWorldLayoutService.zoneIndex(player.level().dimension().location().toString(), player.getZ());
+    }
+
+    private void syncZoneAnnouncement(ServerPlayer player) {
+        int currentZone = playerZone(player);
+        Integer previousZone = lastZoneByPlayer.put(player.getUUID(), currentZone);
+        if (currentZone < 1) {
+            return;
+        }
+        if (previousZone != null && previousZone == currentZone) {
+            return;
+        }
+        ServerMarkers.sendZone(
+            player,
+            currentZone,
+            TestWorldLayoutService.zoneName(currentZone),
+            TestWorldLayoutService.zoneLevelRange(currentZone)
+        );
     }
 
     private static void disableHunger(ServerPlayer player) {

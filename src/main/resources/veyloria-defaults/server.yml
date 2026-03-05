@@ -1,26 +1,26 @@
 database_path: data/veyloria/rpg.db
 seed_path: data/veyloria/seeds
 migration_path: data/veyloria/migrations
-spawn_tick_interval: 20
-spawn_activation_radius: 224
+spawn_tick_interval: 10
+spawn_activation_radius: 320
 auth_lock_tick_interval: 1
-max_active_mobs_per_dimension: 520
+max_active_mobs_per_dimension: 1200
 zone_density_multipliers:
-  zone_1: 1.20
-  zone_2: 1.30
-  zone_3: 1.40
-  zone_4: 1.55
-  zone_5: 1.70
-  zone_6: 1.85
-  zone_7: 2.00
+  zone_1: 2.20
+  zone_2: 2.40
+  zone_3: 2.60
+  zone_4: 2.80
+  zone_5: 3.00
+  zone_6: 3.20
+  zone_7: 3.40
 zone_pack_multipliers:
-  zone_1: 1.10
-  zone_2: 1.15
-  zone_3: 1.20
-  zone_4: 1.28
-  zone_5: 1.35
-  zone_6: 1.42
-  zone_7: 1.50
+  zone_1: 1.60
+  zone_2: 1.70
+  zone_3: 1.80
+  zone_4: 1.90
+  zone_5: 2.00
+  zone_6: 2.10
+  zone_7: 2.20
 combat:
   player_base_damage: 4.0
   player_base_health: 20.0

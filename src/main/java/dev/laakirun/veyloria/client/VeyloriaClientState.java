@@ -34,6 +34,7 @@ public final class VeyloriaClientState {
     private final List<Notification> notificationsView = Collections.unmodifiableList(notifications);
     private final Map<UUID, ResourceBars> barsByPlayer = new HashMap<>();
     private final ItemStack[] loadoutItems = new ItemStack[PlayerLoadoutData.SLOT_COUNT];
+    private ZoneAnnouncement zoneAnnouncement;
 
     private VeyloriaClientState() {
         clearLoadout();
@@ -61,6 +62,7 @@ public final class VeyloriaClientState {
         lastError = "";
         notifications.clear();
         barsByPlayer.clear();
+        zoneAnnouncement = null;
         clearLoadout();
     }
 
@@ -234,6 +236,17 @@ public final class VeyloriaClientState {
         return notificationsView;
     }
 
+    public void showZoneAnnouncement(String zoneName, String levelRange, long shownAtTick) {
+        if (zoneName == null || zoneName.isBlank()) {
+            return;
+        }
+        zoneAnnouncement = new ZoneAnnouncement(zoneName, levelRange == null ? "" : levelRange, Math.max(0L, shownAtTick));
+    }
+
+    public ZoneAnnouncement zoneAnnouncement() {
+        return zoneAnnouncement;
+    }
+
     public void prune(long gameTick) {
         Iterator<Notification> iterator = notifications.iterator();
         while (iterator.hasNext()) {
@@ -249,6 +262,9 @@ public final class VeyloriaClientState {
             currentTargetUuid = null;
             currentTargetExpiresAtTick = 0L;
         }
+        if (zoneAnnouncement != null && zoneAnnouncement.shownAtTick() + ZoneAnnouncement.TOTAL_DURATION_TICKS <= gameTick) {
+            zoneAnnouncement = null;
+        }
     }
 
     private void clearLoadout() {
@@ -262,5 +278,12 @@ public final class VeyloriaClientState {
     }
 
     public record ResourceBars(int health, int healthMax, int mana, int manaMax, long expiresAtTick) {
+    }
+
+    public record ZoneAnnouncement(String zoneName, String levelRange, long shownAtTick) {
+        public static final int FADE_IN_TICKS = 16;
+        public static final int HOLD_TICKS = 56;
+        public static final int FADE_OUT_TICKS = 28;
+        public static final int TOTAL_DURATION_TICKS = FADE_IN_TICKS + HOLD_TICKS + FADE_OUT_TICKS;
     }
 }
